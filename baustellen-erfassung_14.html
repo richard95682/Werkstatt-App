@@ -272,16 +272,24 @@ function speichereBald(){
   if(speicherTimer) clearTimeout(speicherTimer);
   speicherTimer = setTimeout(speichereJetzt, 250);
 }
-async function speichereJetzt(){
+async function speichereJetzt(versuch=1){
   if(speicherTimer){ clearTimeout(speicherTimer); speicherTimer = null; }
   const { mitarbeiter, auftraege, aktiverAuftragId, zeiten, material, fotos, stoppuhr, exportiertBis } = DB;
   try{
     await idbSet('daten', { mitarbeiter, auftraege, aktiverAuftragId, zeiten, material, fotos, stoppuhr, exportiertBis });
   }catch(err){
-    alert('⚠️ Speichern fehlgeschlagen: ' + (err.message||err) + '\n\nDeine Eingabe ist evtl. nicht dauerhaft gesichert. Bitte prüfe, ob die App im privaten Modus läuft (das blockiert lokale Speicherung) und öffne sie ggf. normal in Safari.');
+    const nachricht = String(err?.message||err);
+    // "Script execution context has stopped" passiert meist harmlos, wenn die Seite kurz pausiert wird
+    // (z.B. während sich ein Download-/Teilen-Dialog öffnet) — hier automatisch nochmal versuchen, statt sofort zu alarmieren.
+    const istVoruebergehend = nachricht.includes('execution context') || nachricht.includes('context has stopped');
+    if(istVoruebergehend && versuch<4){
+      setTimeout(()=>speichereJetzt(versuch+1), versuch*400);
+      return;
+    }
+    alert('⚠️ Speichern fehlgeschlagen: ' + nachricht + '\n\nDeine Eingabe ist evtl. nicht dauerhaft gesichert. Bitte prüfe, ob die App im privaten Modus läuft (das blockiert lokale Speicherung) und öffne sie ggf. normal in Safari.');
   }
 }
-window.addEventListener('beforeunload', speichereJetzt);
+window.addEventListener('beforeunload', ()=>speichereJetzt());
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') speichereJetzt(); });
 
 function uid(){ return 'id'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
@@ -1060,10 +1068,24 @@ function renderExportTab(){
     </div>
     <div class="card">
       <h2>Exportieren</h2>
-      <div style="font-size:13.5px; color:var(--text-dim2); margin-bottom:14px; line-height:1.5">
-        Erzeugt eine Datei mit allen erfassten Stunden, Material und Fotos über alle Aufträge. Diese Datei kannst du z. B. per AirDrop, E-Mail oder Nachricht ans Büro schicken — dort wird sie in MöbelKalk importiert.
+      <div style="font-size:13.5px; color:var(--text-dim2); margin-bottom:12px; line-height:1.5">
+        Wähle, welche Aufträge in die Export-Datei sollen. Diese Datei kannst du z. B. per AirDrop, E-Mail oder Nachricht ans Büro schicken — dort wird sie in MöbelKalk importiert.
       </div>
-      <button class="btn primary full" id="export_btn">📤 Alles exportieren</button>
+      ${DB.auftraege.length ? `<div class="besch-checkliste" style="margin-bottom:14px">
+        ${DB.auftraege.map(a=>{
+          const std = (DB.zeiten.filter(z=>z.auftragId===a.id).reduce((s,z)=>s+(z.dauerMin||0),0)/60).toFixed(1);
+          return `<label class="besch-check-row">
+            <input type="checkbox" data-export-auftrag="${a.id}" checked>
+            <span class="besch-check-name">${escapeHtml(a.name)}</span>
+            <span class="besch-check-soll">${std} Std.</span>
+          </label>`;
+        }).join('')}
+      </div>
+      <div class="btn-row" style="margin-bottom:12px">
+        <button class="btn" style="flex:1;padding:9px" id="export_alle_waehlen">Alle</button>
+        <button class="btn" style="flex:1;padding:9px" id="export_keine_waehlen">Keine</button>
+      </div>` : `<div class="empty" style="padding:16px 0">Keine Aufträge vorhanden.</div>`}
+      <button class="btn primary full" id="export_btn">📤 Ausgewählte exportieren</button>
       ${DB.exportiertBis ? `<div style="text-align:center; font-size:12px; color:var(--text-dim2); margin-top:10px">Zuletzt exportiert: ${new Date(DB.exportiertBis).toLocaleString('de-DE')}</div>` : ''}
     </div>
     <div class="card">
@@ -1086,15 +1108,23 @@ function renderExportTab(){
     </div>`;
 }
 function bindExportTab(){
+  document.getElementById('export_alle_waehlen')?.addEventListener('click', ()=>{
+    document.querySelectorAll('[data-export-auftrag]').forEach(cb=>cb.checked = true);
+  });
+  document.getElementById('export_keine_waehlen')?.addEventListener('click', ()=>{
+    document.querySelectorAll('[data-export-auftrag]').forEach(cb=>cb.checked = false);
+  });
   document.getElementById('export_btn').addEventListener('click', async ()=>{
+    const ausgewaehlteIds = new Set([...document.querySelectorAll('[data-export-auftrag]:checked')].map(cb=>cb.dataset.exportAuftrag));
+    if(ausgewaehlteIds.size===0){ zeigeToast('⚠️ Bitte mindestens einen Auftrag auswählen'); return; }
     const payload = {
       typ: 'moebelkalk-werkstatt-export',
       version: 1,
       exportZeitpunkt: new Date().toISOString(),
-      auftraege: DB.auftraege,
-      zeiten: DB.zeiten,
-      material: DB.material,
-      fotos: DB.fotos,
+      auftraege: DB.auftraege.filter(a=>ausgewaehlteIds.has(a.id)),
+      zeiten: DB.zeiten.filter(z=>ausgewaehlteIds.has(z.auftragId)),
+      material: DB.material.filter(m=>ausgewaehlteIds.has(m.auftragId)),
+      fotos: DB.fotos.filter(f=>ausgewaehlteIds.has(f.auftragId)),
     };
     const blob = new Blob([JSON.stringify(payload)], {type:'application/json'});
     const url = URL.createObjectURL(blob);
