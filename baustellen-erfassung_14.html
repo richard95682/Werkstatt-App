@@ -197,6 +197,68 @@
 <body>
 <div id="app"><div class="empty" style="padding-top:80px">Lade…</div></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script>
+/* ---------------------------- CLOUD-SYNC (Firebase) ---------------------------- */
+const WERKSTATT_ID = 'eqeig2timcdpjoqsr6t7zkkn';
+const firebaseConfig = {
+  apiKey: "AIzaSyDjfTAg4lSNT0hNd49BoA0sdxp2hE0GEdg",
+  authDomain: "werkstatt-sync-8aafb.firebaseapp.com",
+  projectId: "werkstatt-sync-8aafb",
+  storageBucket: "werkstatt-sync-8aafb.firebasestorage.app",
+  messagingSenderId: "318676868019",
+  appId: "1:318676868019:web:a67a3ff720164b6b5109c6"
+};
+let cloudDb = null, cloudVerbunden = false;
+try{
+  firebase.initializeApp(firebaseConfig);
+  cloudDb = firebase.firestore();
+  cloudDb.enablePersistence({synchronizeTabs:true}).catch(()=>{}); // erlaubt Warteschlange bei fehlendem Internet, sendet automatisch nach, sobald wieder online
+  cloudVerbunden = true;
+}catch(e){ console.warn('Cloud-Sync nicht verfügbar:', e); }
+const cloudPfad = teil => cloudDb.collection('werkstaetten').doc(WERKSTATT_ID).collection(teil);
+function cloudSchreibeZeit(eintrag){
+  if(!cloudVerbunden) return;
+  cloudPfad('zeiten').doc(eintrag.id).set(eintrag).catch(err=>console.warn('Cloud-Sync (Zeit) fehlgeschlagen, bleibt aber lokal gespeichert:', err));
+}
+function cloudSchreibeMaterial(eintrag){
+  if(!cloudVerbunden) return;
+  cloudPfad('material').doc(eintrag.id).set(eintrag).catch(err=>console.warn('Cloud-Sync (Material) fehlgeschlagen, bleibt aber lokal gespeichert:', err));
+}
+function neueZeitErfassung(eintrag){
+  DB.zeiten.push(eintrag);
+  cloudSchreibeZeit(eintrag);
+  return eintrag;
+}
+function neueMaterialErfassung(eintrag){
+  DB.material.push(eintrag);
+  cloudSchreibeMaterial(eintrag);
+  return eintrag;
+}
+let cloudAuftraegeListenerAktiv = false;
+function cloudAuftraegeListenerStarten(){
+  if(!cloudVerbunden || cloudAuftraegeListenerAktiv) return;
+  cloudAuftraegeListenerAktiv = true;
+  cloudPfad('auftraege').onSnapshot(snap=>{
+    let geaendert = false;
+    snap.docChanges().forEach(change=>{
+      const cloudAuftrag = {id:change.doc.id, ...change.doc.data()};
+      const bestehend = DB.auftraege.find(a=>a.id===cloudAuftrag.id);
+      if(bestehend){
+        bestehend.name = cloudAuftrag.name; bestehend.kunde = cloudAuftrag.kunde;
+        bestehend.sollProSchritt = cloudAuftrag.sollProSchritt||{};
+        bestehend.materialien = cloudAuftrag.materialien||[]; bestehend.beschlaege = cloudAuftrag.beschlaege||[];
+      } else {
+        DB.auftraege.push({id:cloudAuftrag.id, name:cloudAuftrag.name, kunde:cloudAuftrag.kunde, sollProSchritt:cloudAuftrag.sollProSchritt||{}, materialien:cloudAuftrag.materialien||[], beschlaege:cloudAuftrag.beschlaege||[]});
+      }
+      geaendert = true;
+    });
+    if(geaendert){ speichereJetzt(); render(); }
+  }, err=>console.warn('Cloud-Aufträge-Listener Fehler:', err));
+}
+</script>
+
 <script>
 window.addEventListener('error', e=>{
   console.error('Unerwarteter Fehler:', e.error||e.message);
@@ -773,7 +835,7 @@ function bindZeitTab(){
           const kmEingabe = await eingabeDialog({titel:'Kilometer erfassen', label:'Fahrtstrecke (km)', wert:'0', typ:'number', okText:'Speichern'});
           km = parseFloat(kmEingabe)||0;
         }
-        DB.zeiten.push({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:DB.stoppuhr.schritt, dauerMin:Math.round(dauerMin*4)/4, km, notiz:'', quelle:'stoppuhr'});
+        neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:DB.stoppuhr.schritt, dauerMin:Math.round(dauerMin*4)/4, km, notiz:'', quelle:'stoppuhr'});
       }
       DB.stoppuhr = null;
       if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
@@ -812,7 +874,7 @@ function bindZeitTab(){
     const notiz = document.getElementById('man_notiz').value.trim();
     const kmFeld = document.getElementById('man_km');
     const km = kmFeld ? (parseFloat(kmFeld.value)||0) : 0;
-    DB.zeiten.push({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum, schritt:gewaehlterSchritt, dauerMin:std*60, km, notiz, quelle:'manuell'});
+    neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum, schritt:gewaehlterSchritt, dauerMin:std*60, km, notiz, quelle:'manuell'});
     await speichereJetzt();
     render();
     zeigeToast('Eingetragen ✓');
@@ -933,7 +995,7 @@ function bindMaterialTab(){
     const bezeichnung = e.target.dataset.beschCheck;
     const menge = parseFloat(e.target.dataset.beschCheckMenge)||0;
     const einheit = e.target.dataset.beschCheckEinheit;
-    DB.material.push({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit});
+    neueMaterialErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit});
     await speichereJetzt();
     render();
     zeigeToast(`${bezeichnung} · ${menge} ${einheit} eingetragen ✓`);
@@ -944,7 +1006,7 @@ function bindMaterialTab(){
     const menge = parseFloat(document.getElementById('mat_menge').value);
     if(!bezeichnung || !menge) return;
     const einheit = document.getElementById('mat_einheit').value;
-    DB.material.push({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit});
+    neueMaterialErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit});
     await speichereJetzt();
     render();
     zeigeToast('Eingetragen ✓');
@@ -1058,6 +1120,7 @@ function renderExportTab(){
   const zeitAnzahl = DB.zeiten.length, matAnzahl = DB.material.length, fotoAnzahl = DB.fotos.length;
   const gesamtStd = (DB.zeiten.reduce((s,z)=>s+(z.dauerMin||0),0)/60).toFixed(1);
   return `
+    ${cloudVerbunden ? `<div class="hint ok" style="margin-bottom:12px">☁️ Cloud-Sync aktiv — Stunden und Material werden automatisch übertragen, Aufträge automatisch aktuell gehalten. Fotos weiterhin über den Export unten.</div>` : `<div class="hint warn" style="margin-bottom:12px">⚠️ Cloud-Sync gerade nicht verbunden — Stunden/Material bleiben lokal gespeichert und werden automatisch nachgesendet, sobald wieder Internet da ist.</div>`}
     <div class="card">
       <h2>Übersicht — alle Aufträge</h2>
       <div class="stat-row">
@@ -1189,6 +1252,7 @@ function escapeHtml(str){
     await openDB();
     await ladeAlles();
     render();
+    cloudAuftraegeListenerStarten();
   }catch(err){
     document.getElementById('app').innerHTML = `<div style="padding:30px;color:#f3ead9;font-family:sans-serif">
       <h2>⚠️ Start fehlgeschlagen</h2>
