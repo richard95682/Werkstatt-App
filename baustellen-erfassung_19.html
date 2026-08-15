@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1c1611">
+<title>Werkstatt-Zeiterfassung</title>
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%231c1611'/%3E%3Ctext x='50' y='68' font-size='58' text-anchor='middle'%3E%F0%9F%AA%9A%3C/text%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#1c1611;
+    --card:#261e17;
+    --card-2:#2e241b;
+    --line:#3d3025;
+    --text:#f3ead9;
+    --text-dim:#a8998380;
+    --text-dim2:#a89983;
+    --accent:#d98e3f;
+    --accent-dark:#b8763c;
+    --accent-text:#231a12;
+    --danger:#c25b4a;
+    --ok:#7a9e6b;
+    --radius:16px;
+    --safe-bottom:env(safe-area-inset-bottom, 0px);
+    --safe-top:env(safe-area-inset-top, 0px);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    overscroll-behavior-y:none;
+    padding-top:var(--safe-top);
+  }
+  #app{ min-height:100%; padding-bottom:calc(84px + var(--safe-bottom)); }
+  h1,h2,h3{margin:0; font-weight:800; letter-spacing:-.01em;}
+  .topbar{
+    position:sticky; top:0; z-index:20; background:var(--bg);
+    padding:14px 18px 10px; border-bottom:1px solid var(--line);
+  }
+  .topbar-row{display:flex; align-items:center; gap:10px;}
+  .topbar h1{font-size:19px;}
+  .topbar .sub{font-size:12.5px; color:var(--text-dim2); margin-top:2px;}
+  .auftrag-pill{
+    margin-top:10px; display:flex; align-items:center; gap:8px;
+    background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:10px 12px; cursor:pointer;
+  }
+  .auftrag-pill .dot{width:8px;height:8px;border-radius:50%;background:var(--accent); flex-shrink:0;}
+  .auftrag-pill .label{font-size:11px; color:var(--text-dim2); text-transform:uppercase; letter-spacing:.05em;}
+  .auftrag-pill .name{font-weight:700; font-size:15px;}
+  .auftrag-pill .chev{margin-left:auto; color:var(--text-dim2); font-size:13px;}
+
+  main{padding:16px;}
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:16px; margin-bottom:14px;
+  }
+  .card h2{font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-dim2); margin-bottom:12px;}
+
+  /* Stoppuhr */
+  .stoppuhr{text-align:center; padding:10px 0 4px;}
+  .schritt-chips{display:flex; flex-wrap:wrap; gap:8px;}
+  .chip{
+    background:var(--card-2); border:1px solid var(--line); color:var(--text-dim2);
+    border-radius:20px; padding:9px 15px; font-size:13.5px; font-weight:700; cursor:pointer;
+  }
+  .chip.active{background:var(--accent); border-color:var(--accent); color:var(--accent-text);}
+  .chip.chip-neu{background:transparent; border-style:dashed; color:var(--accent);}
+  .chip.chip-baustelle{border-color:#5b7a9e; color:#8fb0d6;}
+  .schritt-chips.kompakt{gap:5px;}
+  .chip.kompakt{padding:5px 10px; font-size:12px; border-radius:14px;}
+  .chip.chip-beschlag{display:flex; flex-direction:column; align-items:flex-start; gap:1px; padding:7px 13px;}
+  .chip.chip-beschlag .chip-soll{font-size:10px; opacity:.65; font-weight:500;}
+  .besch-checkliste{background:var(--card-2); border-radius:10px; border:1px solid var(--line); overflow:hidden;}
+  .besch-check-row{display:flex; align-items:center; gap:8px; padding:7px 11px; border-bottom:1px solid var(--line); cursor:pointer;}
+  .besch-check-row:last-child{border-bottom:none;}
+  .besch-check-row input[type="checkbox"]{width:18px; height:18px; flex-shrink:0; accent-color:var(--accent);}
+  .besch-check-row .besch-check-name{flex:1; font-weight:600; font-size:12.5px;}
+  .besch-check-row .besch-check-soll{font-size:10.5px; color:var(--text-dim2); white-space:nowrap;}
+  .chip.chip-baustelle.active{background:#5b7a9e; border-color:#5b7a9e; color:#fff;}
+  .chip:disabled{opacity:.4;}
+  .schritt-summary{margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid var(--line);}
+  .schritt-summary-row{display:flex; justify-content:space-between; font-size:13px; padding:4px 0; color:var(--text-dim2);}
+  .schritt-summary-row b{color:var(--text);}
+  .soll-vergleich{margin-top:12px; padding-top:12px; border-top:1px solid var(--line); display:flex; gap:6px; flex-wrap:wrap; font-size:13px; color:var(--text-dim2);}
+  .soll-vergleich .trenner{opacity:.4;}
+  .soll-vergleich .ueber{color:var(--danger); font-weight:700;}
+  .soll-vergleich .unter{color:var(--ok); font-weight:700;}
+  .import-msg{margin-top:10px; padding:10px 12px; border-radius:10px; font-size:13px; font-weight:600;}
+  .import-msg.ok{background:rgba(122,158,107,.15); color:var(--ok); border:1px solid rgba(122,158,107,.35);}
+  .import-msg.warn{background:rgba(194,91,74,.15); color:var(--danger); border:1px solid rgba(194,91,74,.35);}
+  .stoppuhr .zeit{font-size:52px; font-weight:800; font-variant-numeric:tabular-nums; letter-spacing:-.02em;}
+  .stoppuhr .status{font-size:13px; color:var(--text-dim2); margin-top:2px; min-height:18px;}
+  .big-btn{
+    width:100%; padding:20px; border:none; border-radius:18px; font-size:18px; font-weight:800;
+    margin-top:16px; cursor:pointer; transition:transform .1s;
+  }
+  .big-btn:active{transform:scale(.97);}
+  .big-btn.start{background:var(--accent); color:var(--accent-text);}
+  .big-btn.stop{background:var(--danger); color:#fff;}
+
+  .btn{
+    border:none; border-radius:12px; padding:13px 16px; font-size:15px; font-weight:700;
+    cursor:pointer; background:var(--card-2); color:var(--text); border:1px solid var(--line);
+  }
+  .btn.primary{background:var(--accent); color:var(--accent-text); border:none;}
+  .btn.ghost{background:transparent; color:var(--accent); border:1px solid var(--accent);}
+  .btn.full{width:100%;}
+  .btn.danger{background:transparent; color:var(--danger); border:1px solid var(--danger);}
+  .btn-row{display:flex; gap:10px; margin-top:4px;}
+
+  label{display:block; font-size:12px; color:var(--text-dim2); margin-bottom:5px; font-weight:600; text-transform:uppercase; letter-spacing:.03em;}
+  input,select,textarea{
+    width:100%; background:var(--card-2); border:1px solid var(--line); color:var(--text);
+    border-radius:10px; padding:13px 12px; font-size:16px; font-family:inherit; margin-bottom:12px;
+  }
+  input:focus,select:focus,textarea:focus{outline:none; border-color:var(--accent);}
+  .field-row{display:flex; gap:10px;}
+  .field-row > div{flex:1;}
+
+  .listitem{
+    display:flex; align-items:center; gap:10px; padding:12px 0;
+    border-bottom:1px solid var(--line);
+  }
+  .listitem:last-child{border-bottom:none;}
+  .listitem .icon{
+    width:38px; height:38px; border-radius:10px; background:var(--card-2);
+    display:flex; align-items:center; justify-content:center; font-size:17px; flex-shrink:0;
+  }
+  .listitem .main{flex:1; min-width:0;}
+  .listitem .title{font-weight:700; font-size:14.5px;}
+  .listitem .meta{font-size:12.5px; color:var(--text-dim2); margin-top:1px;}
+  .listitem .val{font-weight:800; font-size:14.5px; color:var(--accent); white-space:nowrap;}
+  .listitem .del{color:var(--text-dim2); font-size:18px; padding:4px 6px; cursor:pointer;}
+  .listitem .menge-bearbeiten{color:var(--accent); font-size:16px; padding:6px 8px; cursor:pointer;}
+
+  .empty{text-align:center; padding:30px 10px; color:var(--text-dim2); font-size:14px;}
+  .empty .big{font-size:34px; margin-bottom:8px;}
+
+  .fotogrid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:4px;}
+  .fotogrid .thumb{position:relative; aspect-ratio:1; border-radius:10px; overflow:hidden; background:var(--card-2);}
+  .fotogrid .thumb img{width:100%; height:100%; object-fit:cover; display:block;}
+  .fotogrid .thumb .del{
+    position:absolute; top:4px; right:4px; background:rgba(0,0,0,.6); color:#fff;
+    width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13px;
+  }
+
+  /* Bottom Nav */
+  nav.tabbar{
+    position:fixed; bottom:0; left:0; right:0; z-index:30;
+    background:rgba(28,22,17,.96); backdrop-filter:blur(10px);
+    border-top:1px solid var(--line);
+    display:flex; padding:6px 6px calc(6px + var(--safe-bottom));
+  }
+  nav.tabbar button{
+    flex:1; background:none; border:none; color:var(--text-dim2);
+    display:flex; flex-direction:column; align-items:center; gap:2px;
+    padding:8px 2px 4px; font-size:10.5px; font-weight:600; cursor:pointer;
+  }
+  nav.tabbar button .ic{font-size:21px;}
+  nav.tabbar button.active{color:var(--accent);}
+
+  .sheet-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:50;
+    display:flex; align-items:flex-end;
+  }
+  .sheet{
+    background:var(--bg); border-radius:20px 20px 0 0; width:100%; max-height:85vh;
+    overflow-y:auto; padding:18px 18px calc(22px + var(--safe-bottom));
+    border-top:1px solid var(--line);
+  }
+  .sheet-handle{width:36px; height:4px; background:var(--line); border-radius:3px; margin:0 auto 14px;}
+  .sheet h3{font-size:17px; margin-bottom:14px;}
+
+  .toast{
+    position:fixed; bottom:calc(96px + var(--safe-bottom)); left:50%; transform:translateX(-50%);
+    background:var(--ok); color:#16220f; padding:11px 20px; border-radius:30px; font-weight:700;
+    font-size:14px; z-index:80; box-shadow:0 6px 20px rgba(0,0,0,.35);
+  }
+
+  .stat-row{display:flex; gap:10px;}
+  .stat{flex:1; background:var(--card-2); border-radius:12px; padding:12px; text-align:center;}
+  .stat .n{font-size:20px; font-weight:800; color:var(--accent);}
+  .stat .l{font-size:10.5px; color:var(--text-dim2); text-transform:uppercase; letter-spacing:.03em; margin-top:2px;}
+
+  .onboard{padding:26px 22px; display:flex; flex-direction:column; min-height:100vh; justify-content:center;}
+  .onboard .logo{font-size:52px; text-align:center; margin-bottom:6px;}
+  .onboard h1{text-align:center; font-size:22px; margin-bottom:4px;}
+  .onboard p.lead{text-align:center; color:var(--text-dim2); font-size:14px; margin-bottom:28px;}
+</style>
+</head>
+<body>
+<div id="app"><div class="empty" style="padding-top:80px">Lade…</div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script>
+/* ---------------------------- CLOUD-SYNC (Firebase) ---------------------------- */
+const WERKSTATT_ID = 'eqeig2timcdpjoqsr6t7zkkn';
+const firebaseConfig = {
+  apiKey: "AIzaSyDjfTAg4lSNT0hNd49BoA0sdxp2hE0GEdg",
+  authDomain: "werkstatt-sync-8aafb.firebaseapp.com",
+  projectId: "werkstatt-sync-8aafb",
+  storageBucket: "werkstatt-sync-8aafb.firebasestorage.app",
+  messagingSenderId: "318676868019",
+  appId: "1:318676868019:web:a67a3ff720164b6b5109c6"
+};
+let cloudDb = null, cloudVerbunden = false;
+try{
+  firebase.initializeApp(firebaseConfig);
+  cloudDb = firebase.firestore();
+  cloudDb.enablePersistence({synchronizeTabs:true}).catch(()=>{}); // erlaubt Warteschlange bei fehlendem Internet, sendet automatisch nach, sobald wieder online
+  cloudVerbunden = true;
+}catch(e){ console.warn('Cloud-Sync nicht verfügbar:', e); }
+const cloudPfad = teil => cloudDb.collection('werkstaetten').doc(WERKSTATT_ID).collection(teil);
+function cloudSchreibeZeit(eintrag){
+  if(!cloudVerbunden) return;
+  cloudPfad('zeiten').doc(eintrag.id).set(eintrag).catch(err=>console.warn('Cloud-Sync (Zeit) fehlgeschlagen, bleibt aber lokal gespeichert:', err));
+}
+function cloudSchreibeMaterial(eintrag){
+  if(!cloudVerbunden) return;
+  cloudPfad('material').doc(eintrag.id).set(eintrag).catch(err=>console.warn('Cloud-Sync (Material) fehlgeschlagen, bleibt aber lokal gespeichert:', err));
+}
+function neueZeitErfassung(eintrag){
+  DB.zeiten.push(eintrag);
+  cloudSchreibeZeit(eintrag);
+  return eintrag;
+}
+function neueMaterialErfassung(eintrag){
+  DB.material.push(eintrag);
+  cloudSchreibeMaterial(eintrag);
+  return eintrag;
+}
+let cloudAuftraegeListenerAktiv = false;
+function cloudAuftraegeListenerStarten(){
+  if(!cloudVerbunden || cloudAuftraegeListenerAktiv) return;
+  cloudAuftraegeListenerAktiv = true;
+  cloudPfad('auftraege').onSnapshot(snap=>{
+    let geaendert = false;
+    snap.docChanges().forEach(change=>{
+      const cloudAuftrag = {id:change.doc.id, ...change.doc.data()};
+      const bestehend = DB.auftraege.find(a=>a.id===cloudAuftrag.id);
+      if(bestehend){
+        bestehend.name = cloudAuftrag.name; bestehend.kunde = cloudAuftrag.kunde;
+        bestehend.sollProSchritt = cloudAuftrag.sollProSchritt||{};
+        bestehend.materialien = cloudAuftrag.materialien||[]; bestehend.beschlaege = cloudAuftrag.beschlaege||[];
+      } else {
+        DB.auftraege.push({id:cloudAuftrag.id, name:cloudAuftrag.name, kunde:cloudAuftrag.kunde, sollProSchritt:cloudAuftrag.sollProSchritt||{}, materialien:cloudAuftrag.materialien||[], beschlaege:cloudAuftrag.beschlaege||[]});
+      }
+      geaendert = true;
+    });
+    if(geaendert){ speichereJetzt(); render(); }
+  }, err=>console.warn('Cloud-Aufträge-Listener Fehler:', err));
+}
+</script>
+
+<script>
+window.addEventListener('error', e=>{
+  console.error('Unerwarteter Fehler:', e.error||e.message);
+  if(document.getElementById('app') && document.getElementById('app').children.length){
+    alert('⚠️ Unerwarteter Fehler: ' + (e.error?.message||e.message) + '\n\nBitte prüfe, ob die App in echtem Safari läuft (nicht in einer Vorschau/privatem Modus) und lade sie ggf. neu.');
+  }
+});
+/* ============================= SPEICHER (IndexedDB) ============================= */
+let DBH = null;
+function openDB(){
+  return new Promise((resolve,reject)=>{
+    const timeoutId = setTimeout(()=>{
+      reject(new Error('IndexedDB antwortet nicht (Zeitüberschreitung) — vermutlich blockiert diese Ansicht den lokalen Speicher.'));
+    }, 4000);
+    let req;
+    try{
+      req = indexedDB.open('baustellen_erfassung_db', 1);
+    }catch(err){
+      clearTimeout(timeoutId);
+      reject(err);
+      return;
+    }
+    req.onupgradeneeded = e=>{
+      const db = e.target.result;
+      if(!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+    };
+    req.onsuccess = e=>{ clearTimeout(timeoutId); DBH = e.target.result; resolve(); };
+    req.onerror = ()=>{ clearTimeout(timeoutId); reject(req.error); };
+  });
+}
+function idbGet(key){
+  return new Promise((resolve,reject)=>{
+    const tx = DBH.transaction('kv','readonly'); const st = tx.objectStore('kv');
+    const r = st.get(key);
+    r.onsuccess = ()=>resolve(r.result); r.onerror = ()=>reject(r.error);
+  });
+}
+function idbSet(key,val){
+  return new Promise((resolve,reject)=>{
+    const tx = DBH.transaction('kv','readwrite'); const st = tx.objectStore('kv');
+    const r = st.put(val,key);
+    r.onsuccess = ()=>resolve(); r.onerror = ()=>reject(r.error);
+  });
+}
+
+const STANDARD_SCHRITTE = ['AV','Zuschnitt','Kanten','Zusammenbau','CNC-Bearbeitung','Oberfläche'];
+const BAUSTELLE_SCHRITT = 'Baustellenmontage';
+function alleSchritte(){
+  const eigene = [...new Set(DB.zeiten.map(z=>z.schritt).filter(s=>s && !STANDARD_SCHRITTE.includes(s)))];
+  return [...STANDARD_SCHRITTE, ...eigene];
+}
+
+const DB = {
+  mitarbeiter: '',
+  bekannteMitarbeiter: [],  // Namen, zwischen denen gewechselt werden kann (z.B. aus MöbelKalk importiert oder manuell ergänzt)
+  materialKatalog: [],      // alle Materialnamen aus MöbelKalk (nicht nur die des aktuellen Auftrags)
+  beschlagKatalog: [],       // [{name, einheit}] alle Beschläge aus MöbelKalk
+  auftraege: [],       // {id, name, kunde}
+  aktiverAuftragId: null,
+  zeiten: [],          // {id, auftragId, mitarbeiter, datum, schritt, dauerMin, notiz, quelle:'stoppuhr'|'manuell'}
+  material: [],         // {id, auftragId, mitarbeiter, datum, bezeichnung, menge, einheit}
+  fotos: [],            // {id, auftragId, mitarbeiter, datum, dataUrl, notiz}
+  stoppuhr: null,        // {startZeit, auftragId, schritt, pausiertSeit, pausenMs} oder null
+  exportiertBis: null,   // ISO-Zeitstempel der letzten Export-Erstellung (nur Info)
+};
+
+async function ladeAlles(){
+  const gespeichert = await idbGet('daten');
+  if(gespeichert) Object.assign(DB, gespeichert);
+}
+let speicherTimer = null;
+function speichereBald(){
+  if(speicherTimer) clearTimeout(speicherTimer);
+  speicherTimer = setTimeout(speichereJetzt, 250);
+}
+async function speichereJetzt(versuch=1){
+  if(speicherTimer){ clearTimeout(speicherTimer); speicherTimer = null; }
+  const { mitarbeiter, auftraege, aktiverAuftragId, zeiten, material, fotos, stoppuhr, exportiertBis } = DB;
+  try{
+    await idbSet('daten', { mitarbeiter, auftraege, aktiverAuftragId, zeiten, material, fotos, stoppuhr, exportiertBis });
+  }catch(err){
+    const nachricht = String(err?.message||err);
+    // "Script execution context has stopped" passiert meist harmlos, wenn die Seite kurz pausiert wird
+    // (z.B. während sich ein Download-/Teilen-Dialog öffnet) — hier automatisch nochmal versuchen, statt sofort zu alarmieren.
+    const istVoruebergehend = nachricht.includes('execution context') || nachricht.includes('context has stopped');
+    if(istVoruebergehend && versuch<4){
+      setTimeout(()=>speichereJetzt(versuch+1), versuch*400);
+      return;
+    }
+    alert('⚠️ Speichern fehlgeschlagen: ' + nachricht + '\n\nDeine Eingabe ist evtl. nicht dauerhaft gesichert. Bitte prüfe, ob die App im privaten Modus läuft (das blockiert lokale Speicherung) und öffne sie ggf. normal in Safari.');
+  }
+}
+window.addEventListener('beforeunload', ()=>speichereJetzt());
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') speichereJetzt(); });
+
+function uid(){ return 'id'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
+function heute(){ return new Date().toISOString().slice(0,10); }
+function fmtDatum(iso){
+  const d = new Date(iso+'T00:00:00');
+  return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'});
+}
+function fmtDauer(min){
+  const h = Math.floor(min/60), m = Math.round(min%60);
+  return h>0 ? `${h} Std. ${m>0?m+' Min.':''}`.trim() : `${m} Min.`;
+}
+function fmtUhrzeit(ms){
+  const totalSek = Math.floor(ms/1000);
+  const h = String(Math.floor(totalSek/3600)).padStart(2,'0');
+  const m = String(Math.floor((totalSek%3600)/60)).padStart(2,'0');
+  const s = String(totalSek%60).padStart(2,'0');
+  return `${h}:${m}:${s}`;
+}
+function aktuellerAuftrag(){ return DB.auftraege.find(a=>a.id===DB.aktiverAuftragId) || null; }
+function zeigeToast(text){
+  const t = document.createElement('div');
+  t.className = 'toast'; t.textContent = text;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(), 1800);
+}
+
+/* Eigene Eingabe-/Bestätigungs-Dialoge statt prompt()/confirm() — diese funktionieren auf dem iPhone
+   nicht zuverlässig, wenn die App über "Zum Home-Bildschirm" im Vollbild-Modus (ohne Safari-Rahmen) läuft. */
+function eingabeDialog({titel, label, wert='', typ='text', abbrechenText='Abbrechen', okText='Übernehmen'}){
+  return new Promise(resolve=>{
+    const backdrop = document.createElement('div');
+    backdrop.className = 'sheet-backdrop';
+    backdrop.innerHTML = `<div class="sheet">
+      <div class="sheet-handle"></div>
+      <h3>${titel}</h3>
+      ${label?`<label>${label}</label>`:''}
+      <input id="eingabe_dialog_feld" type="${typ}" ${typ==='number'?'inputmode="decimal"':''} value="${wert}">
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn" style="flex:1" id="eingabe_dialog_abbrechen">${abbrechenText}</button>
+        <button class="btn primary" style="flex:1" id="eingabe_dialog_ok">${okText}</button>
+      </div>
+    </div>`;
+    document.body.appendChild(backdrop);
+    const feld = backdrop.querySelector('#eingabe_dialog_feld');
+    feld.focus(); feld.select();
+    const schliessen = ergebnis=>{ backdrop.remove(); resolve(ergebnis); };
+    backdrop.addEventListener('click', e=>{ if(e.target===backdrop) schliessen(null); });
+    backdrop.querySelector('#eingabe_dialog_abbrechen').addEventListener('click', ()=>schliessen(null));
+    backdrop.querySelector('#eingabe_dialog_ok').addEventListener('click', ()=>schliessen(feld.value));
+    feld.addEventListener('keydown', e=>{ if(e.key==='Enter') schliessen(feld.value); });
+  });
+}
+function bestaetigenDialog({titel, text, okText='Ja', abbrechenText='Abbrechen', gefaehrlich=false}){
+  return new Promise(resolve=>{
+    const backdrop = document.createElement('div');
+    backdrop.className = 'sheet-backdrop';
+    backdrop.innerHTML = `<div class="sheet">
+      <div class="sheet-handle"></div>
+      <h3>${titel}</h3>
+      <div class="small" style="margin-bottom:16px;line-height:1.5">${text}</div>
+      <div class="btn-row">
+        <button class="btn" style="flex:1" id="bestaetigen_dialog_nein">${abbrechenText}</button>
+        <button class="btn ${gefaehrlich?'danger':'primary'}" style="flex:1" id="bestaetigen_dialog_ja">${okText}</button>
+      </div>
+    </div>`;
+    document.body.appendChild(backdrop);
+    const schliessen = ergebnis=>{ backdrop.remove(); resolve(ergebnis); };
+    backdrop.addEventListener('click', e=>{ if(e.target===backdrop) schliessen(false); });
+    backdrop.querySelector('#bestaetigen_dialog_nein').addEventListener('click', ()=>schliessen(false));
+    backdrop.querySelector('#bestaetigen_dialog_ja').addEventListener('click', ()=>schliessen(true));
+  });
+}
+
+/* ============================= APP-STATUS ============================= */
+let aktiverTab = 'zeit'; // zeit | material | fotos | export
+let stoppuhrIntervall = null;
+
+/* ============================= RENDER ============================= */
+function render(){
+  const app = document.getElementById('app');
+  if(!DB.mitarbeiter){ app.innerHTML = renderOnboarding(); bindOnboarding(); return; }
+  if(!DB.aktiverAuftragId || !aktuellerAuftrag()){
+    app.innerHTML = renderAuftragAuswahlVollbild();
+    bindAuftragAuswahlVollbild();
+    return;
+  }
+  app.innerHTML = `
+    ${renderTopbar()}
+    <main>${renderTabInhalt()}</main>
+    ${renderTabbar()}
+  `;
+  bindTopbar();
+  bindTabbar();
+  bindTabInhalt();
+}
+
+/* ---------- Onboarding (erster Start: Name eingeben) ---------- */
+function renderOnboarding(){
+  return `
+    <div class="onboard">
+      <div class="logo">🪚⏱️</div>
+      <h1>Werkstatt-Zeiterfassung</h1>
+      <p class="lead">Fertigungszeiten je Arbeitsschritt erfassen — läuft komplett offline.</p>
+      <label>Dein Name</label>
+      <input id="ob_name" placeholder="z. B. Max Mustermann" autocomplete="name">
+      <button class="btn primary full" id="ob_weiter" style="margin-top:6px">Los geht's</button>
+    </div>`;
+}
+function bindOnboarding(){
+  const weiter = async ()=>{
+    const val = document.getElementById('ob_name').value.trim();
+    if(!val) return;
+    DB.mitarbeiter = val;
+    if(!DB.bekannteMitarbeiter.includes(val)) DB.bekannteMitarbeiter.push(val);
+    await speichereJetzt();
+    render();
+  };
+  document.getElementById('ob_weiter').addEventListener('click', weiter);
+  document.getElementById('ob_name').addEventListener('keydown', e=>{ if(e.key==='Enter') weiter(); });
+}
+
+/* ---------- Vollbild-Auftragsauswahl (wenn noch kein/kein gültiger Auftrag aktiv) ---------- */
+function renderAuftragAuswahlVollbild(){
+  return `
+    <div class="topbar">
+      <div class="topbar-row"><h1>Auftrag wählen</h1></div>
+      <div class="sub">Hallo ${DB.mitarbeiter} 👋 — für welchen Auftrag erfasst du gerade?</div>
+    </div>
+    <main>
+      ${DB.auftraege.length ? `<div class="card"><h2>Deine Aufträge</h2>
+        ${DB.auftraege.map(a=>`<div class="listitem" data-waehle-auftrag="${a.id}" style="cursor:pointer">
+          <div class="icon">📁</div>
+          <div class="main"><div class="title">${escapeHtml(a.name)}</div>${a.kunde?`<div class="meta">${escapeHtml(a.kunde)}</div>`:''}</div>
+          <div class="listitem-del del" data-loesche-auftrag="${a.id}">✕</div>
+        </div>`).join('')}
+      </div>` : `<div class="empty"><div class="big">📁</div>Noch keine Aufträge angelegt.</div>`}
+      <div class="card">
+        <h2>Aus MöbelKalk übernehmen</h2>
+        <div style="font-size:13px; color:var(--text-dim2); margin-bottom:12px; line-height:1.5">Projektliste-Datei aus MöbelKalk importieren — bestehende Aufträge werden aktualisiert, neue automatisch angelegt. Soll-Stunden je Fertigungsschritt werden mit übernommen und beim Erfassen zum Vergleich angezeigt.</div>
+        <input type="file" id="projektliste_input" accept="application/json" style="display:none">
+        <button class="btn ghost full" id="projektliste_btn">📥 Projektliste importieren</button>
+        <div id="import_status"></div>
+      </div>
+      <div class="card">
+        <h2>Neuer Auftrag</h2>
+        <label>Auftragsbezeichnung</label>
+        <input id="na_name" placeholder="z. B. Einbauschrank Riedler">
+        <label>Kunde (optional)</label>
+        <input id="na_kunde" placeholder="z. B. Familie Riedler">
+        <button class="btn primary full" id="na_anlegen">+ Auftrag anlegen</button>
+      </div>
+      <div class="card">
+        <h2>💾 Sicherung wiederherstellen</h2>
+        <div style="font-size:13px; color:var(--text-dim2); margin-bottom:12px; line-height:1.5">Hast du schon eine Sicherung dieser App (z. B. von einem alten Handy)? Hier einspielen — ersetzt den kompletten aktuellen Stand.</div>
+        <input type="file" id="ruecksichern_input_start" accept="application/json" style="display:none">
+        <button class="btn ghost full" id="ruecksichern_btn_start">⬆️ Sicherung einspielen</button>
+      </div>
+    </main>`;
+}
+function bindAuftragAuswahlVollbild(){
+  el_ruecksichern_bindung: {
+    document.getElementById('ruecksichern_btn_start')?.addEventListener('click', ()=>document.getElementById('ruecksichern_input_start').click());
+    document.getElementById('ruecksichern_input_start')?.addEventListener('change', e=>spieleSicherungEin(e));
+  }
+  document.querySelectorAll('[data-waehle-auftrag]').forEach(el=>el.addEventListener('click', async e=>{
+    if(e.target.closest('[data-loesche-auftrag]')) return;
+    DB.aktiverAuftragId = el.dataset.waehleAuftrag;
+    await speichereJetzt();
+    render();
+  }));
+  document.querySelectorAll('[data-loesche-auftrag]').forEach(el=>el.addEventListener('click', async e=>{
+    e.stopPropagation();
+    const ok = await bestaetigenDialog({titel:'Auftrag löschen?', text:'Diesen Auftrag inkl. aller erfassten Daten wirklich löschen?', okText:'Löschen', gefaehrlich:true});
+    if(!ok) return;
+    const id = el.dataset.loescheAuftrag;
+    DB.auftraege = DB.auftraege.filter(a=>a.id!==id);
+    DB.zeiten = DB.zeiten.filter(z=>z.auftragId!==id);
+    DB.material = DB.material.filter(m=>m.auftragId!==id);
+    DB.fotos = DB.fotos.filter(f=>f.auftragId!==id);
+    await speichereJetzt();
+    render();
+  }));
+  document.getElementById('na_anlegen').addEventListener('click', async ()=>{
+    try{
+      const nameFeld = document.getElementById('na_name');
+      const name = nameFeld.value.trim();
+      if(!name){
+        nameFeld.style.borderColor = 'var(--danger)';
+        nameFeld.placeholder = 'Bitte zuerst eine Bezeichnung eingeben!';
+        nameFeld.focus();
+        zeigeToast('⚠️ Bitte zuerst eine Auftragsbezeichnung eingeben');
+        return;
+      }
+      const kunde = document.getElementById('na_kunde').value.trim();
+      const neu = {id:uid(), name, kunde};
+      DB.auftraege.push(neu);
+      DB.aktiverAuftragId = neu.id;
+      await speichereJetzt();
+      render();
+    }catch(err){
+      alert('Fehler beim Anlegen des Auftrags: ' + (err.message||err) + '\n\nBitte prüfe, ob die App über Safari geöffnet wurde (nicht in einer Vorschau) und nicht im privaten Modus läuft.');
+    }
+  });
+  document.getElementById('projektliste_btn').addEventListener('click', ()=>document.getElementById('projektliste_input').click());
+  document.getElementById('projektliste_input').addEventListener('change', async e=>{
+    const file = e.target.files[0];
+    e.target.value = '';
+    if(!file) return;
+    const statusEl = document.getElementById('import_status');
+    try{
+      const text = await file.text();
+      const daten = JSON.parse(text);
+      if(daten.typ !== 'moebelkalk-projektliste'){
+        statusEl.innerHTML = `<div class="import-msg warn">⚠️ Das ist keine gültige MöbelKalk-Projektliste.</div>`;
+        return;
+      }
+      DB.materialKatalog = daten.materialKatalog || DB.materialKatalog;
+      DB.beschlagKatalog = daten.beschlagKatalog || DB.beschlagKatalog;
+      let neuAngelegt = 0, aktualisiert = 0;
+      (daten.projekte||[]).forEach(pImport=>{
+        const bestehend = DB.auftraege.find(a=>a.id===pImport.id);
+        if(bestehend){
+          bestehend.name = pImport.name; bestehend.kunde = pImport.kunde; bestehend.sollProSchritt = pImport.sollProSchritt||{}; bestehend.materialien = pImport.materialien||[]; bestehend.beschlaege = pImport.beschlaege||[];
+          aktualisiert++;
+        } else {
+          DB.auftraege.push({id:pImport.id, name:pImport.name, kunde:pImport.kunde, sollProSchritt:pImport.sollProSchritt||{}, materialien:pImport.materialien||[], beschlaege:pImport.beschlaege||[]});
+          neuAngelegt++;
+        }
+      });
+      await speichereJetzt();
+      zeigeToast(`✅ ${neuAngelegt} neue, ${aktualisiert} aktualisierte Aufträge übernommen`);
+      render();
+    }catch(err){
+      statusEl.innerHTML = `<div class="import-msg warn">⚠️ Datei konnte nicht gelesen werden.</div>`;
+    }
+  });
+}
+
+/* ---------- Topbar (Auftrag-Pill zum Wechseln) ---------- */
+function renderTopbar(){
+  const a = aktuellerAuftrag();
+  return `
+    <div class="topbar">
+      <div class="topbar-row">
+        <div style="flex:1">
+          <h1>Werkstatt-Zeiterfassung</h1>
+          <div class="sub" id="mitarbeiter_wechsel" style="cursor:pointer;text-decoration:underline dotted">👷 ${escapeHtml(DB.mitarbeiter)} ▾</div>
+        </div>
+      </div>
+      <div class="auftrag-pill" id="auftrag_wechsel">
+        <div class="dot"></div>
+        <div>
+          <div class="label">Aktiver Auftrag</div>
+          <div class="name">${escapeHtml(a.name)}</div>
+        </div>
+        <div class="chev">Wechseln ›</div>
+      </div>
+    </div>`;
+}
+function bindTopbar(){
+  document.getElementById('auftrag_wechsel').addEventListener('click', ()=>{
+    DB.aktiverAuftragId = null; // erzwingt Vollbild-Auswahl, Stoppuhr bleibt im Hintergrund erhalten
+    speichereJetzt();
+    render();
+  });
+  document.getElementById('mitarbeiter_wechsel').addEventListener('click', oeffneMitarbeiterAuswahl);
+}
+function oeffneKatalogSuche(){
+  const alleEintraege = [
+    ...DB.materialKatalog.map(m=>({name:m.name, typ:'material', m2ProStueck:m.m2ProStueck})),
+    ...DB.beschlagKatalog.map(b=>({name:b.name, typ:'beschlag', einheit:b.einheit})),
+  ];
+  const backdrop = document.createElement('div');
+  backdrop.className = 'sheet-backdrop';
+  backdrop.innerHTML = `<div class="sheet">
+    <div class="sheet-handle"></div>
+    <h3>🔍 Material/Beschlag suchen</h3>
+    <input id="katalog_suche_input" placeholder="Suchen …" style="margin-bottom:10px">
+    <div id="katalog_ergebnisse"></div>
+  </div>`;
+  document.body.appendChild(backdrop);
+  backdrop.addEventListener('click', e=>{ if(e.target===backdrop) backdrop.remove(); });
+  const ergebnisseEl = backdrop.querySelector('#katalog_ergebnisse');
+  function zeigeErgebnisse(filter){
+    const f = filter.trim().toLowerCase();
+    const treffer = f ? alleEintraege.filter(e=>e.name.toLowerCase().includes(f)) : alleEintraege;
+    ergebnisseEl.innerHTML = treffer.length ? treffer.slice(0,60).map(e=>`
+      <div class="listitem" data-katalog-wahl="${escapeHtml(e.name)}" data-katalog-einheit="${escapeHtml(e.einheit||'')}" style="cursor:pointer">
+        <div class="icon">${e.typ==='beschlag'?'🔩':'🪵'}</div>
+        <div class="main"><div class="title">${escapeHtml(e.name)}</div></div>
+      </div>`).join('') : `<div class="empty">Nichts gefunden.</div>`;
+    ergebnisseEl.querySelectorAll('[data-katalog-wahl]').forEach(item=>item.addEventListener('click', ()=>{
+      document.getElementById('mat_bez').value = item.dataset.katalogWahl;
+      const einheit = item.dataset.katalogEinheit;
+      const einheitSelect = document.getElementById('mat_einheit');
+      if(einheit && [...einheitSelect.options].some(o=>o.value===einheit)) einheitSelect.value = einheit;
+      backdrop.remove();
+      document.getElementById('mat_bez').dispatchEvent(new Event('input', {bubbles:true}));
+      document.getElementById('mat_menge').focus();
+    }));
+  }
+  zeigeErgebnisse('');
+  backdrop.querySelector('#katalog_suche_input').addEventListener('input', e=>zeigeErgebnisse(e.target.value));
+}
+function oeffneMitarbeiterAuswahl(){
+  if(DB.stoppuhr){ zeigeToast('⚠️ Erst Stoppuhr anhalten, dann Mitarbeiter wechseln'); return; }
+  const backdrop = document.createElement('div');
+  backdrop.className = 'sheet-backdrop';
+  backdrop.innerHTML = `<div class="sheet">
+    <div class="sheet-handle"></div>
+    <h3>👷 Mitarbeiter wechseln</h3>
+    ${DB.bekannteMitarbeiter.map(name=>`<div class="listitem" data-waehle-mitarbeiter="${escapeHtml(name)}" style="cursor:pointer">
+      <div class="icon">${name===DB.mitarbeiter?'✅':'👷'}</div>
+      <div class="main"><div class="title">${escapeHtml(name)}</div></div>
+    </div>`).join('')}
+    <div style="margin-top:14px">
+      <label>Neuer Mitarbeiter</label>
+      <input id="ma_neu_name" placeholder="Name eingeben">
+      <button class="btn primary full" id="ma_neu_add">+ Hinzufügen &amp; wechseln</button>
+    </div>
+  </div>`;
+  document.body.appendChild(backdrop);
+  backdrop.addEventListener('click', e=>{ if(e.target===backdrop) backdrop.remove(); });
+  backdrop.querySelectorAll('[data-waehle-mitarbeiter]').forEach(el=>el.addEventListener('click', async ()=>{
+    DB.mitarbeiter = el.dataset.waehleMitarbeiter;
+    await speichereJetzt();
+    backdrop.remove();
+    render();
+  }));
+  backdrop.querySelector('#ma_neu_add').addEventListener('click', async ()=>{
+    const name = backdrop.querySelector('#ma_neu_name').value.trim();
+    if(!name) return;
+    if(!DB.bekannteMitarbeiter.includes(name)) DB.bekannteMitarbeiter.push(name);
+    DB.mitarbeiter = name;
+    await speichereJetzt();
+    backdrop.remove();
+    render();
+  });
+}
+
+/* ---------- Tabbar ---------- */
+function renderTabbar(){
+  const tabs = [
+    {id:'zeit', ic:'⏱️', label:'Zeit'},
+    {id:'material', ic:'📦', label:'Material'},
+    {id:'fotos', ic:'📷', label:'Fotos'},
+    {id:'export', ic:'📤', label:'Export'},
+  ];
+  return `<nav class="tabbar">
+    ${tabs.map(t=>`<button data-tab="${t.id}" class="${aktiverTab===t.id?'active':''}"><span class="ic">${t.ic}</span>${t.label}</button>`).join('')}
+  </nav>`;
+}
+function bindTabbar(){
+  document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click', ()=>{
+    if(DB.stoppuhr) speichereJetzt(); // laufende Stoppuhr zwischenspeichern
+    aktiverTab = b.dataset.tab; render();
+  }));
+}
+
+/* ---------- Tab-Inhalt Router ---------- */
+function renderTabInhalt(){
+  if(aktiverTab==='zeit') return renderZeitTab();
+  if(aktiverTab==='material') return renderMaterialTab();
+  if(aktiverTab==='fotos') return renderFotosTab();
+  if(aktiverTab==='export') return renderExportTab();
+  return '';
+}
+function bindTabInhalt(){
+  if(aktiverTab==='zeit') bindZeitTab();
+  if(aktiverTab==='material') bindMaterialTab();
+  if(aktiverTab==='fotos') bindFotosTab();
+  if(aktiverTab==='export') bindExportTab();
+}
+
+/* ============================= TAB: ZEIT ============================= */
+let gewaehlterSchritt = null; // aktuell im UI ausgewählter Fertigungsschritt (nicht gespeichert, nur UI-Status)
+
+function stoppuhrElapsedMs(){
+  if(!DB.stoppuhr) return 0;
+  const angesammelt = DB.stoppuhr.angesammelteMs||0;
+  if(DB.stoppuhr.pausiert) return angesammelt;
+  return angesammelt + (Date.now()-DB.stoppuhr.startZeit);
+}
+
+function renderZeitTab(){
+  const a = aktuellerAuftrag();
+  const laeuft = DB.stoppuhr && DB.stoppuhr.auftragId===a.id;
+  const pausiert = laeuft && DB.stoppuhr.pausiert;
+  if(laeuft) gewaehlterSchritt = DB.stoppuhr.schritt;
+  if(!gewaehlterSchritt) gewaehlterSchritt = STANDARD_SCHRITTE[0];
+  const istBaustelle = gewaehlterSchritt === BAUSTELLE_SCHRITT;
+  const eintraege = DB.zeiten.filter(z=>z.auftragId===a.id).sort((x,y)=>y.datum.localeCompare(x.datum));
+  const gesamtMin = eintraege.reduce((s,z)=>s+(z.dauerMin||0),0);
+  // Zusammenfassung je Fertigungsschritt für diesen Auftrag
+  const jeSchritt = {};
+  eintraege.forEach(z=>{ jeSchritt[z.schritt] = (jeSchritt[z.schritt]||0) + (z.dauerMin||0); });
+  const sollAktuellerSchritt = a.sollProSchritt?.[gewaehlterSchritt];
+  const istAktuellerSchritt = (jeSchritt[gewaehlterSchritt]||0)/60;
+  const kmGesamt = eintraege.filter(z=>z.schritt===BAUSTELLE_SCHRITT).reduce((s,z)=>s+(z.km||0),0);
+
+  return `
+    <div class="card">
+      <h2>Fertigungsschritt</h2>
+      <div class="schritt-chips">
+        ${alleSchritte().map(s=>`<button class="chip ${s===gewaehlterSchritt?'active':''}" data-schritt="${escapeHtml(s)}" ${laeuft?'disabled':''}>${escapeHtml(s)}</button>`).join('')}
+        <button class="chip chip-neu" id="schritt_neu_btn" ${laeuft?'disabled':''}>+ eigener</button>
+      </div>
+      <div class="schritt-chips" style="margin-top:8px">
+        <button class="chip chip-baustelle ${istBaustelle?'active':''}" data-schritt="${BAUSTELLE_SCHRITT}" ${laeuft?'disabled':''}>🚐 Baustellenmontage</button>
+      </div>
+      ${sollAktuellerSchritt!==undefined ? `<div class="soll-vergleich">
+        <span>Soll ${sollAktuellerSchritt.toFixed(2)} Std.</span>
+        <span class="trenner">·</span>
+        <span>Ist ${istAktuellerSchritt.toFixed(2)} Std.</span>
+        <span class="trenner">·</span>
+        <span class="${istAktuellerSchritt>sollAktuellerSchritt?'ueber':'unter'}">Δ ${(istAktuellerSchritt-sollAktuellerSchritt).toFixed(2)} Std.</span>
+      </div>` : ''}
+      ${istBaustelle && kmGesamt>0 ? `<div class="soll-vergleich"><span>🚐 Bisher erfasste Kilometer: <b>${kmGesamt} km</b></span></div>` : ''}
+    </div>
+    <div class="card">
+      <h2>Stoppuhr — ${escapeHtml(gewaehlterSchritt)}</h2>
+      <div class="stoppuhr">
+        <div class="zeit" id="stoppuhr_anzeige">${laeuft ? fmtUhrzeit(stoppuhrElapsedMs()) : '00:00:00'}</div>
+        <div class="status">${laeuft ? (pausiert ? '⏸ pausiert' : 'läuft') : 'bereit'}</div>
+      </div>
+      ${laeuft ? `
+      <div class="btn-row" style="margin-top:16px">
+        <button class="btn ${pausiert?'primary':''}" style="flex:1;padding:16px" id="stoppuhr_pause_btn">${pausiert ? '▶ Weiter' : '⏸ Pause'}</button>
+        <button class="btn danger" style="flex:1;padding:16px" id="stoppuhr_btn">⏹ Stoppen</button>
+      </div>` : `
+      <button class="big-btn start" id="stoppuhr_btn">▶ Starten</button>`}
+    </div>
+    <div class="card">
+      <h2>Manuell eintragen — ${escapeHtml(gewaehlterSchritt)}</h2>
+      <div class="field-row">
+        <div><label>Stunden</label><input id="man_std" type="number" min="0" step="0.25" inputmode="decimal" placeholder="0"></div>
+        <div><label>Datum</label><input id="man_datum" type="date" value="${heute()}"></div>
+      </div>
+      ${istBaustelle ? `<label>Kilometer (Fahrtstrecke)</label><input id="man_km" type="number" min="0" step="1" inputmode="numeric" placeholder="0">` : ''}
+      <label>Notiz (optional)</label>
+      <input id="man_notiz" placeholder="z. B. Sonderanfertigung Griffe …">
+      <button class="btn primary full" id="man_add">+ Hinzufügen</button>
+    </div>
+    <div class="card">
+      <h2>Erfasste Zeit — ${escapeHtml(a.name)}</h2>
+      <div class="stat-row" style="margin-bottom:12px">
+        <div class="stat"><div class="n">${(gesamtMin/60).toFixed(1)}</div><div class="l">Std. gesamt</div></div>
+        <div class="stat"><div class="n">${eintraege.length}</div><div class="l">Einträge</div></div>
+      </div>
+      ${Object.keys(jeSchritt).length ? `<div class="schritt-summary">
+        ${Object.entries(jeSchritt).map(([s,min])=>`<div class="schritt-summary-row"><span>${escapeHtml(s)}</span><b>${(min/60).toFixed(2)} Std.</b></div>`).join('')}
+      </div>` : ''}
+      ${eintraege.length ? eintraege.map(z=>`
+        <div class="listitem">
+          <div class="icon">${z.quelle==='stoppuhr'?'⏱️':'✍️'}</div>
+          <div class="main"><div class="title">${escapeHtml(z.schritt)} · ${fmtDauer(z.dauerMin)}${z.km?` · ${z.km} km`:''}</div><div class="meta">${fmtDatum(z.datum)} · ${escapeHtml(z.mitarbeiter)}${z.notiz?' · '+escapeHtml(z.notiz):''}</div></div>
+          <div class="del" data-del-zeit="${z.id}">✕</div>
+        </div>`).join('') : `<div class="empty">Noch keine Zeit erfasst.</div>`}
+    </div>`;
+}
+function bindZeitTab(){
+  const a = aktuellerAuftrag();
+  document.querySelectorAll('[data-schritt]').forEach(b=>b.addEventListener('click', ()=>{
+    if(DB.stoppuhr) return;
+    gewaehlterSchritt = b.dataset.schritt;
+    render();
+  }));
+  document.getElementById('schritt_neu_btn').addEventListener('click', async ()=>{
+    if(DB.stoppuhr) return;
+    const neu = await eingabeDialog({titel:'Neuer Fertigungsschritt', label:'Name', okText:'Anlegen'});
+    if(neu && neu.trim()){ gewaehlterSchritt = neu.trim(); render(); }
+  });
+
+  document.getElementById('stoppuhr_btn').addEventListener('click', async ()=>{
+    if(DB.stoppuhr && DB.stoppuhr.auftragId===a.id){
+      const dauerMin = stoppuhrElapsedMs()/60000;
+      if(dauerMin>=0.5){
+        let km = 0;
+        if(DB.stoppuhr.schritt===BAUSTELLE_SCHRITT){
+          const kmEingabe = await eingabeDialog({titel:'Kilometer erfassen', label:'Fahrtstrecke (km)', wert:'0', typ:'number', okText:'Speichern'});
+          km = parseFloat(kmEingabe)||0;
+        }
+        neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:DB.stoppuhr.schritt, dauerMin:Math.round(dauerMin*4)/4, km, notiz:'', quelle:'stoppuhr'});
+      }
+      DB.stoppuhr = null;
+      if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
+      await speichereJetzt();
+      render();
+      zeigeToast('Zeit gespeichert ✓');
+    } else {
+      DB.stoppuhr = {startZeit:Date.now(), auftragId:a.id, schritt:gewaehlterSchritt, pausiert:false, angesammelteMs:0};
+      await speichereJetzt();
+      render();
+      starteStoppuhrAnzeige();
+    }
+  });
+  document.getElementById('stoppuhr_pause_btn')?.addEventListener('click', async ()=>{
+    if(!DB.stoppuhr) return;
+    if(DB.stoppuhr.pausiert){
+      // Weiter: neuer Zeitabschnitt beginnt jetzt
+      DB.stoppuhr.startZeit = Date.now();
+      DB.stoppuhr.pausiert = false;
+      starteStoppuhrAnzeige();
+    } else {
+      // Pause: aktuellen Abschnitt einrechnen und anhalten
+      DB.stoppuhr.angesammelteMs = (DB.stoppuhr.angesammelteMs||0) + (Date.now()-DB.stoppuhr.startZeit);
+      DB.stoppuhr.pausiert = true;
+      if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
+    }
+    await speichereJetzt();
+    render();
+  });
+  if(DB.stoppuhr && DB.stoppuhr.auftragId===a.id && !DB.stoppuhr.pausiert) starteStoppuhrAnzeige();
+
+  document.getElementById('man_add').addEventListener('click', async ()=>{
+    const std = parseFloat(document.getElementById('man_std').value);
+    if(!std || std<=0) return;
+    const datum = document.getElementById('man_datum').value || heute();
+    const notiz = document.getElementById('man_notiz').value.trim();
+    const kmFeld = document.getElementById('man_km');
+    const km = kmFeld ? (parseFloat(kmFeld.value)||0) : 0;
+    neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum, schritt:gewaehlterSchritt, dauerMin:std*60, km, notiz, quelle:'manuell'});
+    await speichereJetzt();
+    render();
+    zeigeToast('Eingetragen ✓');
+  });
+  document.querySelectorAll('[data-del-zeit]').forEach(b=>b.addEventListener('click', async ()=>{
+    DB.zeiten = DB.zeiten.filter(z=>z.id!==b.dataset.delZeit);
+    await speichereJetzt(); render();
+  }));
+}
+function starteStoppuhrAnzeige(){
+  if(stoppuhrIntervall) clearInterval(stoppuhrIntervall);
+  stoppuhrIntervall = setInterval(()=>{
+    const el = document.getElementById('stoppuhr_anzeige');
+    if(!el || !DB.stoppuhr || DB.stoppuhr.pausiert){ clearInterval(stoppuhrIntervall); return; }
+    el.textContent = fmtUhrzeit(stoppuhrElapsedMs());
+  }, 1000);
+}
+
+/* ============================= TAB: MATERIAL ============================= */
+function renderMaterialTab(){
+  const a = aktuellerAuftrag();
+  const eintraege = DB.material.filter(m=>m.auftragId===a.id).sort((x,y)=>y.datum.localeCompare(x.datum));
+  const bekannteMaterialien = a.materialien||[];
+  const bekannteBeschlaege = a.beschlaege||[];
+  return `
+    <div class="card">
+      <h2>Material erfassen</h2>
+      ${bekannteMaterialien.length ? `
+      <label>Material aus Kalkulation</label>
+      <div class="schritt-chips kompakt" style="margin-bottom:10px">
+        ${bekannteMaterialien.map(name=>`<button class="chip kompakt" data-mat-schnellwahl="${escapeHtml(name)}">${escapeHtml(name)}</button>`).join('')}
+      </div>` : ''}
+      ${bekannteBeschlaege.length ? `
+      <label>🔩 Beschläge — Häkchen = Soll übernehmen, Name antippen = Bezeichnung übernehmen</label>
+      <div class="besch-checkliste" style="margin-bottom:6px">
+        ${bekannteBeschlaege.map(b=>{
+          const schonErfasst = eintraege.some(m=>m.bezeichnung===b.name);
+          return `<div class="besch-check-row">
+            <input type="checkbox" data-besch-check="${escapeHtml(b.name)}" data-besch-check-menge="${b.sollMenge}" data-besch-check-einheit="${escapeHtml(b.einheit)}" ${schonErfasst?'checked':''}>
+            <span class="besch-check-name" data-besch-name-wahl="${escapeHtml(b.name)}" data-besch-name-einheit="${escapeHtml(b.einheit)}" style="cursor:pointer">${escapeHtml(b.name)}</span>
+            <span class="besch-check-soll">Soll ${b.sollMenge} ${escapeHtml(b.einheit)}</span>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="small" style="margin-bottom:12px;color:var(--text-dim2)">Menge weicht ab? Unten von Hand eintragen.</div>` : ''}
+      ${(DB.materialKatalog.length || DB.beschlagKatalog.length) ? `<button class="btn ghost full" id="katalog_such_btn" style="margin-bottom:14px">🔍 Andere Materialien/Beschläge wählen</button>` : ''}
+      <label>Bezeichnung</label>
+      <input id="mat_bez" placeholder="z. B. Spanplatte weiß 19mm">
+      <div id="mat_stueck_zeile" style="display:none">
+        <label>Stückzahl (ganze Platten)</label>
+        <input id="mat_stueck" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
+        <div class="small" id="mat_stueck_hinweis" style="margin-top:-8px;margin-bottom:12px;color:var(--text-dim2)"></div>
+      </div>
+      <div class="field-row">
+        <div><label>Menge</label><input id="mat_menge" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></div>
+        <div><label>Einheit</label><select id="mat_einheit">
+          <option value="Stk">Stk</option><option value="m²">m²</option><option value="lfm">lfm</option>
+          <option value="kg">kg</option><option value="Liter">Liter</option><option value="Pauschal">Pauschal</option>
+        </select></div>
+      </div>
+      <button class="btn primary full" id="mat_add">+ Hinzufügen</button>
+    </div>
+    <div class="card">
+      <h2>Erfasstes Material — ${escapeHtml(a.name)}</h2>
+      ${eintraege.length ? eintraege.map(m=>`
+        <div class="listitem">
+          <div class="icon">📦</div>
+          <div class="main"><div class="title">${escapeHtml(m.bezeichnung)}</div><div class="meta">${fmtDatum(m.datum)} · ${escapeHtml(m.mitarbeiter)}</div></div>
+          <div class="val">${m.menge} ${escapeHtml(m.einheit)}</div>
+          <div class="menge-bearbeiten" data-menge-edit="${m.id}">✎</div>
+          <div class="del" data-del-material="${m.id}">✕</div>
+        </div>`).join('') : `<div class="empty">Noch kein Material erfasst.</div>`}
+    </div>`;
+}
+function bindMaterialTab(){
+  const a = aktuellerAuftrag();
+  function pruefeStueckUmrechnung(){
+    const bez = document.getElementById('mat_bez').value.trim().toLowerCase();
+    const treffer = DB.materialKatalog.find(m=>m.name.toLowerCase()===bez && m.m2ProStueck>0);
+    const zeile = document.getElementById('mat_stueck_zeile');
+    if(treffer){
+      zeile.style.display = '';
+      document.getElementById('mat_stueck_hinweis').textContent = `1 Stück = ${treffer.m2ProStueck.toString().replace('.',',')} m² (aus MöbelKalk hinterlegt)`;
+      zeile.dataset.m2ProStueck = treffer.m2ProStueck;
+    } else {
+      zeile.style.display = 'none';
+      document.getElementById('mat_stueck').value = '';
+    }
+  }
+  document.getElementById('mat_bez').addEventListener('input', pruefeStueckUmrechnung);
+  pruefeStueckUmrechnung();
+  document.getElementById('mat_stueck').addEventListener('input', e=>{
+    const m2ProStueck = parseFloat(document.getElementById('mat_stueck_zeile').dataset.m2ProStueck)||0;
+    const stk = parseFloat(e.target.value)||0;
+    document.getElementById('mat_menge').value = stk && m2ProStueck ? (stk*m2ProStueck).toFixed(2) : '';
+    const einheitSelect = document.getElementById('mat_einheit');
+    if([...einheitSelect.options].some(o=>o.value==='m²')) einheitSelect.value = 'm²';
+  });
+  document.querySelectorAll('[data-mat-schnellwahl]').forEach(chip=>chip.addEventListener('click', ()=>{
+    document.getElementById('mat_bez').value = chip.dataset.matSchnellwahl;
+    pruefeStueckUmrechnung();
+    document.getElementById('mat_stueck_zeile').style.display!=='none' ? document.getElementById('mat_stueck').focus() : document.getElementById('mat_menge').focus();
+  }));
+  document.querySelectorAll('[data-besch-name-wahl]').forEach(span=>span.addEventListener('click', ()=>{
+    document.getElementById('mat_bez').value = span.dataset.beschNameWahl;
+    pruefeStueckUmrechnung();
+    const einheitSelect = document.getElementById('mat_einheit');
+    const einheit = span.dataset.beschNameEinheit;
+    if(einheit && [...einheitSelect.options].some(o=>o.value===einheit)) einheitSelect.value = einheit;
+    document.getElementById('mat_menge').focus();
+  }));
+  document.querySelectorAll('[data-besch-check]').forEach(cb=>cb.addEventListener('change', async e=>{
+    if(!e.target.checked){
+      // Absichtlich keine automatische Löschung — ein Häkchen entfernt nichts, nur "+ Hinzufügen" bzw. das ✕ in der Liste räumt auf.
+      e.target.checked = true;
+      return;
+    }
+    const bezeichnung = e.target.dataset.beschCheck;
+    const menge = parseFloat(e.target.dataset.beschCheckMenge)||0;
+    const einheit = e.target.dataset.beschCheckEinheit;
+    neueMaterialErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit});
+    await speichereJetzt();
+    render();
+    zeigeToast(`${bezeichnung} · ${menge} ${einheit} eingetragen ✓`);
+  }));
+  document.getElementById('katalog_such_btn')?.addEventListener('click', oeffneKatalogSuche);
+  document.getElementById('mat_add').addEventListener('click', async ()=>{
+    const bezeichnung = document.getElementById('mat_bez').value.trim();
+    const menge = parseFloat(document.getElementById('mat_menge').value);
+    if(!bezeichnung || !menge) return;
+    const einheit = document.getElementById('mat_einheit').value;
+    neueMaterialErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit});
+    await speichereJetzt();
+    render();
+    zeigeToast('Eingetragen ✓');
+  });
+  document.querySelectorAll('[data-del-material]').forEach(b=>b.addEventListener('click', async ()=>{
+    DB.material = DB.material.filter(m=>m.id!==b.dataset.delMaterial);
+    await speichereJetzt(); render();
+  }));
+  document.querySelectorAll('[data-menge-edit]').forEach(el=>el.addEventListener('click', async e=>{
+    const eintrag = DB.material.find(m=>m.id===e.currentTarget.dataset.mengeEdit);
+    if(!eintrag) return;
+    const neueMenge = await eingabeDialog({titel:'Menge ändern', label:`${eintrag.bezeichnung} (${eintrag.einheit})`, wert:eintrag.menge, typ:'number', okText:'Speichern'});
+    if(neueMenge===null) return;
+    const wert = parseFloat(String(neueMenge).replace(',','.'));
+    if(isNaN(wert) || wert<0) return;
+    eintrag.menge = wert;
+    await speichereJetzt();
+    render();
+    zeigeToast('Menge geändert ✓');
+  }));
+}
+
+/* ============================= TAB: FOTOS ============================= */
+function renderFotosTab(){
+  const a = aktuellerAuftrag();
+  const eintraege = DB.fotos.filter(f=>f.auftragId===a.id).sort((x,y)=>y.datum.localeCompare(x.datum));
+  return `
+    <div class="card">
+      <h2>Foto hinzufügen</h2>
+      <input type="file" id="foto_input" accept="image/*" capture="environment" style="display:none">
+      <button class="btn primary full" id="foto_btn">📷 Foto aufnehmen / auswählen</button>
+    </div>
+    <div class="card">
+      <h2>Fotos — ${escapeHtml(a.name)} (${eintraege.length})</h2>
+      ${eintraege.length ? `<div class="fotogrid">
+        ${eintraege.map(f=>`<div class="thumb"><img src="${f.dataUrl}" loading="lazy"><div class="del" data-del-foto="${f.id}">✕</div></div>`).join('')}
+      </div>` : `<div class="empty"><div class="big">📷</div>Noch keine Fotos.</div>`}
+    </div>`;
+}
+function bindFotosTab(){
+  const a = aktuellerAuftrag();
+  document.getElementById('foto_btn').addEventListener('click', ()=>document.getElementById('foto_input').click());
+  document.getElementById('foto_input').addEventListener('change', async e=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const dataUrl = await verkleinereBild(file);
+    DB.fotos.push({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), dataUrl, notiz:''});
+    await speichereJetzt();
+    render();
+    zeigeToast('Foto gespeichert ✓');
+  });
+  document.querySelectorAll('[data-del-foto]').forEach(b=>b.addEventListener('click', async ()=>{
+    DB.fotos = DB.fotos.filter(f=>f.id!==b.dataset.delFoto);
+    await speichereJetzt(); render();
+  }));
+}
+function verkleinereBild(file){
+  return new Promise(resolve=>{
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      img.onload = ()=>{
+        const maxSeite = 1280;
+        let {width, height} = img;
+        if(width>height && width>maxSeite){ height = height*maxSeite/width; width = maxSeite; }
+        else if(height>maxSeite){ width = width*maxSeite/height; height = maxSeite; }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.72));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ============================= TAB: EXPORT ============================= */
+async function spieleSicherungEin(e){
+  const file = e.target.files[0];
+  e.target.value = '';
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const daten = JSON.parse(text);
+    if(daten.typ !== 'werkstatt-erfassung-sicherung'){
+      alert('⚠️ Das ist keine gültige Sicherungsdatei dieser App.');
+      return;
+    }
+    const ok = await bestaetigenDialog({titel:'Sicherung einspielen?', text:'Den aktuellen Stand auf diesem Handy komplett durch die Sicherung ersetzen? Nicht gesicherte, neuere Daten gehen dabei verloren.', okText:'Einspielen', gefaehrlich:true});
+    if(!ok) return;
+    DB.mitarbeiter = daten.mitarbeiter || DB.mitarbeiter;
+    DB.bekannteMitarbeiter = daten.bekannteMitarbeiter || [];
+    DB.materialKatalog = daten.materialKatalog || DB.materialKatalog;
+    DB.beschlagKatalog = daten.beschlagKatalog || DB.beschlagKatalog;
+    DB.auftraege = daten.auftraege || [];
+    DB.zeiten = daten.zeiten || [];
+    DB.material = daten.material || [];
+    DB.fotos = daten.fotos || [];
+    DB.stoppuhr = daten.stoppuhr || null;
+    DB.exportiertBis = daten.exportiertBis || null;
+    DB.aktiverAuftragId = null;
+    await speichereJetzt();
+    zeigeToast('Sicherung eingespielt ✓');
+    render();
+  }catch(err){
+    alert('⚠️ Datei konnte nicht gelesen werden: ' + (err.message||err));
+  }
+}
+function renderExportTab(){
+  const zeitAnzahl = DB.zeiten.length, matAnzahl = DB.material.length, fotoAnzahl = DB.fotos.length;
+  const gesamtStd = (DB.zeiten.reduce((s,z)=>s+(z.dauerMin||0),0)/60).toFixed(1);
+  return `
+    ${cloudVerbunden ? `<div class="hint ok" style="margin-bottom:12px">☁️ Cloud-Sync aktiv — Stunden und Material werden automatisch übertragen, Aufträge automatisch aktuell gehalten. Fotos weiterhin über den Export unten.</div>` : `<div class="hint warn" style="margin-bottom:12px">⚠️ Cloud-Sync gerade nicht verbunden — Stunden/Material bleiben lokal gespeichert und werden automatisch nachgesendet, sobald wieder Internet da ist.</div>`}
+    <div class="card">
+      <h2>Übersicht — alle Aufträge</h2>
+      <div class="stat-row">
+        <div class="stat"><div class="n">${gesamtStd}</div><div class="l">Std. gesamt</div></div>
+        <div class="stat"><div class="n">${matAnzahl}</div><div class="l">Material</div></div>
+        <div class="stat"><div class="n">${fotoAnzahl}</div><div class="l">Fotos</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Exportieren</h2>
+      <div style="font-size:13.5px; color:var(--text-dim2); margin-bottom:12px; line-height:1.5">
+        Wähle, welche Aufträge in die Export-Datei sollen. Diese Datei kannst du z. B. per AirDrop, E-Mail oder Nachricht ans Büro schicken — dort wird sie in MöbelKalk importiert.
+      </div>
+      ${DB.auftraege.length ? `<div class="besch-checkliste" style="margin-bottom:14px">
+        ${DB.auftraege.map(a=>{
+          const std = (DB.zeiten.filter(z=>z.auftragId===a.id).reduce((s,z)=>s+(z.dauerMin||0),0)/60).toFixed(1);
+          return `<label class="besch-check-row">
+            <input type="checkbox" data-export-auftrag="${a.id}" checked>
+            <span class="besch-check-name">${escapeHtml(a.name)}</span>
+            <span class="besch-check-soll">${std} Std.</span>
+          </label>`;
+        }).join('')}
+      </div>
+      <div class="btn-row" style="margin-bottom:12px">
+        <button class="btn" style="flex:1;padding:9px" id="export_alle_waehlen">Alle</button>
+        <button class="btn" style="flex:1;padding:9px" id="export_keine_waehlen">Keine</button>
+      </div>` : `<div class="empty" style="padding:16px 0">Keine Aufträge vorhanden.</div>`}
+      <button class="btn primary full" id="export_btn">📤 Ausgewählte exportieren</button>
+      ${DB.exportiertBis ? `<div style="text-align:center; font-size:12px; color:var(--text-dim2); margin-top:10px">Zuletzt exportiert: ${new Date(DB.exportiertBis).toLocaleString('de-DE')}</div>` : ''}
+    </div>
+    <div class="card">
+      <h2>💾 Sichern &amp; Zurücksichern</h2>
+      <div style="font-size:13.5px; color:var(--text-dim2); margin-bottom:14px; line-height:1.5">
+        Unabhängig vom Export nach MöbelKalk: sichert den <b>kompletten Stand dieses Handys</b> (alle Aufträge, Zeiten, Material, Fotos, bekannte Mitarbeiter) in eine eigene Datei. Praktisch als Sicherheitsnetz oder um auf ein neues Handy umzuziehen.
+      </div>
+      <div class="btn-row">
+        <button class="btn ghost" style="flex:1" id="sichern_btn">💾 Sichern</button>
+        <button class="btn ghost" style="flex:1" id="ruecksichern_btn">⬆️ Zurücksichern</button>
+      </div>
+      <input type="file" id="ruecksichern_input" accept="application/json" style="display:none">
+    </div>
+    <div class="card">
+      <h2>Nach erfolgreichem Import im Büro</h2>
+      <div style="font-size:13.5px; color:var(--text-dim2); margin-bottom:14px; line-height:1.5">
+        Sobald die Daten im Büro sicher übernommen wurden, kannst du hier alles zurücksetzen, um für den nächsten Auftrag von vorne zu beginnen. Das löscht nur die Daten auf diesem Handy, nicht in MöbelKalk.
+      </div>
+      <button class="btn danger full" id="reset_btn">🗑 Alle Daten auf diesem Handy löschen</button>
+    </div>`;
+}
+function bindExportTab(){
+  document.getElementById('export_alle_waehlen')?.addEventListener('click', ()=>{
+    document.querySelectorAll('[data-export-auftrag]').forEach(cb=>cb.checked = true);
+  });
+  document.getElementById('export_keine_waehlen')?.addEventListener('click', ()=>{
+    document.querySelectorAll('[data-export-auftrag]').forEach(cb=>cb.checked = false);
+  });
+  document.getElementById('export_btn').addEventListener('click', async ()=>{
+    const ausgewaehlteIds = new Set([...document.querySelectorAll('[data-export-auftrag]:checked')].map(cb=>cb.dataset.exportAuftrag));
+    if(ausgewaehlteIds.size===0){ zeigeToast('⚠️ Bitte mindestens einen Auftrag auswählen'); return; }
+    const payload = {
+      typ: 'moebelkalk-werkstatt-export',
+      version: 1,
+      exportZeitpunkt: new Date().toISOString(),
+      auftraege: DB.auftraege.filter(a=>ausgewaehlteIds.has(a.id)),
+      zeiten: DB.zeiten.filter(z=>ausgewaehlteIds.has(z.auftragId)),
+      material: DB.material.filter(m=>ausgewaehlteIds.has(m.auftragId)),
+      fotos: DB.fotos.filter(f=>ausgewaehlteIds.has(f.auftragId)),
+    };
+    const blob = new Blob([JSON.stringify(payload)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a2 = document.createElement('a');
+    const datumStr = new Date().toISOString().slice(0,10);
+    a2.href = url;
+    a2.download = `Werkstatt-Export_${DB.mitarbeiter.replace(/\s+/g,'-')}_${datumStr}.json`;
+    document.body.appendChild(a2); a2.click(); a2.remove();
+    URL.revokeObjectURL(url);
+    DB.exportiertBis = new Date().toISOString();
+    await speichereJetzt();
+    render();
+    zeigeToast('Export erstellt ✓');
+  });
+  document.getElementById('sichern_btn').addEventListener('click', ()=>{
+    const payload = {
+      typ: 'werkstatt-erfassung-sicherung',
+      version: 1,
+      sicherungZeitpunkt: new Date().toISOString(),
+      mitarbeiter: DB.mitarbeiter,
+      bekannteMitarbeiter: DB.bekannteMitarbeiter,
+      materialKatalog: DB.materialKatalog,
+      beschlagKatalog: DB.beschlagKatalog,
+      auftraege: DB.auftraege,
+      zeiten: DB.zeiten,
+      material: DB.material,
+      fotos: DB.fotos,
+      stoppuhr: DB.stoppuhr,
+      exportiertBis: DB.exportiertBis,
+    };
+    const blob = new Blob([JSON.stringify(payload)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a3 = document.createElement('a');
+    const datumStr = new Date().toISOString().slice(0,10);
+    a3.href = url;
+    a3.download = `Werkstatt-Sicherung_${DB.mitarbeiter.replace(/\s+/g,'-')}_${datumStr}.json`;
+    document.body.appendChild(a3); a3.click(); a3.remove();
+    URL.revokeObjectURL(url);
+    zeigeToast('Sicherung erstellt ✓');
+  });
+  document.getElementById('ruecksichern_btn').addEventListener('click', ()=>document.getElementById('ruecksichern_input').click());
+  document.getElementById('ruecksichern_input').addEventListener('change', spieleSicherungEin);
+  document.getElementById('reset_btn').addEventListener('click', async ()=>{
+    const ok1 = await bestaetigenDialog({titel:'Wirklich alles löschen?', text:'Wirklich ALLE Aufträge, Stunden, Material und Fotos auf diesem Handy löschen? Das kann nicht rückgängig gemacht werden.', okText:'Löschen', gefaehrlich:true});
+    if(!ok1) return;
+    const ok2 = await bestaetigenDialog({titel:'Ganz sicher?', text:'Am besten vorher nochmal exportieren, falls noch nicht geschehen.', okText:'Ja, jetzt löschen', gefaehrlich:true});
+    if(!ok2) return;
+    DB.auftraege = []; DB.zeiten = []; DB.material = []; DB.fotos = []; DB.aktiverAuftragId = null; DB.stoppuhr = null;
+    await speichereJetzt();
+    render();
+  });
+}
+
+/* ============================= HELPER ============================= */
+function escapeHtml(str){
+  return String(str??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ============================= START ============================= */
+(async function init(){
+  try{
+    await openDB();
+    await ladeAlles();
+    render();
+    cloudAuftraegeListenerStarten();
+  }catch(err){
+    document.getElementById('app').innerHTML = `<div style="padding:30px;color:#f3ead9;font-family:sans-serif">
+      <h2>⚠️ Start fehlgeschlagen</h2>
+      <p>Die App konnte nicht korrekt starten. Das passiert manchmal, wenn die Seite in einer eingeschränkten Vorschau geöffnet wurde (z. B. direkt aus einer Nachricht/Mail) statt in echtem Safari, oder im privaten Modus.</p>
+      <p style="opacity:.7;font-size:13px">Technische Meldung: ${err.message||err}</p>
+      <p><b>Bitte:</b> Datei erst herunterladen, dann über die Dateien-App oder das Downloads-Symbol bewusst in Safari öffnen (nicht privater Modus), dann nochmal versuchen.</p>
+    </div>`;
+  }
+})();
+</script>
+</body>
+</html>
