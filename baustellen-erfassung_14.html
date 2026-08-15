@@ -1049,7 +1049,9 @@ function bindMaterialTab(){
     zeigeToast('Eingetragen ✓');
   });
   document.querySelectorAll('[data-del-material]').forEach(b=>b.addEventListener('click', async ()=>{
-    DB.material = DB.material.filter(m=>m.id!==b.dataset.delMaterial);
+    const id = b.dataset.delMaterial;
+    DB.material = DB.material.filter(m=>m.id!==id);
+    if(cloudVerbunden) cloudPfad('material').doc(id).delete().catch(err=>console.warn('Cloud-Löschen (Material) fehlgeschlagen:', err));
     await speichereJetzt(); render();
   }));
   document.querySelectorAll('[data-menge-edit]').forEach(el=>el.addEventListener('click', async e=>{
