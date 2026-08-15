@@ -218,22 +218,25 @@ try{
   cloudVerbunden = true;
 }catch(e){ console.warn('Cloud-Sync nicht verfügbar:', e); }
 const cloudPfad = teil => cloudDb.collection('werkstaetten').doc(WERKSTATT_ID).collection(teil);
-function cloudSchreibeZeit(eintrag){
+async function cloudSchreibeZeit(eintrag){
   if(!cloudVerbunden) return;
-  cloudPfad('zeiten').doc(eintrag.id).set(eintrag).catch(err=>console.warn('Cloud-Sync (Zeit) fehlgeschlagen, bleibt aber lokal gespeichert:', err));
+  try{ await cloudPfad('zeiten').doc(eintrag.id).set(eintrag); }
+  catch(err){ console.warn('Cloud-Sync (Zeit) fehlgeschlagen, bleibt aber lokal gespeichert:', err); }
 }
-function cloudSchreibeMaterial(eintrag){
+async function cloudSchreibeMaterial(eintrag){
   if(!cloudVerbunden) return;
-  cloudPfad('material').doc(eintrag.id).set(eintrag).catch(err=>console.warn('Cloud-Sync (Material) fehlgeschlagen, bleibt aber lokal gespeichert:', err));
+  try{ await cloudPfad('material').doc(eintrag.id).set(eintrag); }
+  catch(err){ console.warn('Cloud-Sync (Material) fehlgeschlagen, bleibt aber lokal gespeichert:', err); }
 }
-function neueZeitErfassung(eintrag){
+async function neueZeitErfassung(eintrag){
   DB.zeiten.push(eintrag);
-  cloudSchreibeZeit(eintrag);
+  await cloudSchreibeZeit(eintrag); // bewusst abgewartet, bevor die App-Oberfläche weitermacht — verhindert, dass ein
+  // schnelles Schließen der App direkt nach dem Speichern (typisch nach Stoppuhr-Stopp) die Cloud-Übertragung abbricht
   return eintrag;
 }
-function neueMaterialErfassung(eintrag){
+async function neueMaterialErfassung(eintrag){
   DB.material.push(eintrag);
-  cloudSchreibeMaterial(eintrag);
+  await cloudSchreibeMaterial(eintrag);
   return eintrag;
 }
 let cloudNachholSyncLief = false;
@@ -869,7 +872,7 @@ function bindZeitTab(){
           const kmEingabe = await eingabeDialog({titel:'Kilometer erfassen', label:'Fahrtstrecke (km)', wert:'0', typ:'number', okText:'Speichern'});
           km = parseFloat(kmEingabe)||0;
         }
-        neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:DB.stoppuhr.schritt, dauerMin:Math.round(dauerMin*4)/4, km, notiz:'', quelle:'stoppuhr'});
+        await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:DB.stoppuhr.schritt, dauerMin:Math.round(dauerMin*4)/4, km, notiz:'', quelle:'stoppuhr'});
       }
       DB.stoppuhr = null;
       if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
@@ -908,7 +911,7 @@ function bindZeitTab(){
     const notiz = document.getElementById('man_notiz').value.trim();
     const kmFeld = document.getElementById('man_km');
     const km = kmFeld ? (parseFloat(kmFeld.value)||0) : 0;
-    neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum, schritt:gewaehlterSchritt, dauerMin:std*60, km, notiz, quelle:'manuell'});
+    await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum, schritt:gewaehlterSchritt, dauerMin:std*60, km, notiz, quelle:'manuell'});
     await speichereJetzt();
     render();
     zeigeToast('Eingetragen ✓');
@@ -1029,7 +1032,7 @@ function bindMaterialTab(){
     const bezeichnung = e.target.dataset.beschCheck;
     const menge = parseFloat(e.target.dataset.beschCheckMenge)||0;
     const einheit = e.target.dataset.beschCheckEinheit;
-    neueMaterialErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit});
+    await neueMaterialErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit});
     await speichereJetzt();
     render();
     zeigeToast(`${bezeichnung} · ${menge} ${einheit} eingetragen ✓`);
@@ -1040,7 +1043,7 @@ function bindMaterialTab(){
     const menge = parseFloat(document.getElementById('mat_menge').value);
     if(!bezeichnung || !menge) return;
     const einheit = document.getElementById('mat_einheit').value;
-    neueMaterialErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit});
+    await neueMaterialErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit});
     await speichereJetzt();
     render();
     zeigeToast('Eingetragen ✓');
