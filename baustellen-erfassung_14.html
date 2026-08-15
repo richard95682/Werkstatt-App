@@ -631,7 +631,7 @@ function bindTopbar(){
 function oeffneKatalogSuche(){
   const alleEintraege = [
     ...DB.materialKatalog.map(m=>({name:m.name, typ:'material', m2ProStueck:m.m2ProStueck})),
-    ...DB.beschlagKatalog.map(b=>({name:b.name, typ:'beschlag', einheit:b.einheit})),
+    ...DB.beschlagKatalog.map(b=>({name:b.name, typ:'beschlag', einheit:b.einheit, kategorie:b.kategorie})),
   ];
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
@@ -647,11 +647,25 @@ function oeffneKatalogSuche(){
   function zeigeErgebnisse(filter){
     const f = filter.trim().toLowerCase();
     const treffer = f ? alleEintraege.filter(e=>e.name.toLowerCase().includes(f)) : alleEintraege;
-    ergebnisseEl.innerHTML = treffer.length ? treffer.slice(0,60).map(e=>`
-      <div class="listitem" data-katalog-wahl="${escapeHtml(e.name)}" data-katalog-einheit="${escapeHtml(e.einheit||'')}" style="cursor:pointer">
-        <div class="icon">${e.typ==='beschlag'?'🔩':'🪵'}</div>
-        <div class="main"><div class="title">${escapeHtml(e.name)}</div></div>
-      </div>`).join('') : `<div class="empty">Nichts gefunden.</div>`;
+    if(!treffer.length){ ergebnisseEl.innerHTML = `<div class="empty">Nichts gefunden.</div>`; return; }
+    // Ohne Suchbegriff: nach Kategorie gruppiert anzeigen (wie in MöbelKalks Materialliste). Bei aktiver Suche: einfache flache Trefferliste.
+    if(!f){
+      const gruppen = {};
+      treffer.forEach(e=>{ const kat = e.typ==='material' ? 'Material' : (e.kategorie||'Sonstige'); (gruppen[kat]=gruppen[kat]||[]).push(e); });
+      ergebnisseEl.innerHTML = Object.keys(gruppen).map(kat=>`
+        <div class="small" style="font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px;padding-bottom:4px;border-bottom:2px solid var(--accent);color:var(--accent-dark);font-size:12px">${kat}</div>
+        ${gruppen[kat].slice(0,60).map(e=>`
+          <div class="listitem" data-katalog-wahl="${escapeHtml(e.name)}" data-katalog-einheit="${escapeHtml(e.einheit||'')}" style="cursor:pointer">
+            <div class="icon">${e.typ==='beschlag'?'🔩':'🪵'}</div>
+            <div class="main"><div class="title">${escapeHtml(e.name)}</div></div>
+          </div>`).join('')}`).join('');
+    } else {
+      ergebnisseEl.innerHTML = treffer.slice(0,60).map(e=>`
+        <div class="listitem" data-katalog-wahl="${escapeHtml(e.name)}" data-katalog-einheit="${escapeHtml(e.einheit||'')}" style="cursor:pointer">
+          <div class="icon">${e.typ==='beschlag'?'🔩':'🪵'}</div>
+          <div class="main"><div class="title">${escapeHtml(e.name)}</div></div>
+        </div>`).join('');
+    }
     ergebnisseEl.querySelectorAll('[data-katalog-wahl]').forEach(item=>item.addEventListener('click', ()=>{
       document.getElementById('mat_bez').value = item.dataset.katalogWahl;
       const einheit = item.dataset.katalogEinheit;
