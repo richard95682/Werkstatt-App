@@ -236,6 +236,18 @@ function neueMaterialErfassung(eintrag){
   cloudSchreibeMaterial(eintrag);
   return eintrag;
 }
+let cloudNachholSyncLief = false;
+async function cloudNachholSync(){
+  // Sendet ALLE lokal vorhandenen Zeiten/Material einmalig nach — wichtig für Einträge, die entstanden sind,
+  // bevor die Cloud-Anbindung überhaupt existierte (die kamen beim ursprünglichen Erfassen ja nie in die Cloud).
+  // .set() ist idempotent (überschreibt anhand der ID), mehrfaches Ausführen ist unbedenklich, keine Duplikate.
+  if(!cloudVerbunden || cloudNachholSyncLief) return;
+  cloudNachholSyncLief = true;
+  try{
+    for(const z of DB.zeiten){ await cloudPfad('zeiten').doc(z.id).set(z); }
+    for(const m of DB.material){ await cloudPfad('material').doc(m.id).set(m); }
+  }catch(err){ console.warn('Cloud-Nachhol-Sync fehlgeschlagen:', err); }
+}
 let cloudAuftraegeListenerAktiv = false;
 function cloudAuftraegeListenerStarten(){
   if(!cloudVerbunden || cloudAuftraegeListenerAktiv) return;
@@ -1142,7 +1154,10 @@ function renderExportTab(){
   const zeitAnzahl = DB.zeiten.length, matAnzahl = DB.material.length, fotoAnzahl = DB.fotos.length;
   const gesamtStd = (DB.zeiten.reduce((s,z)=>s+(z.dauerMin||0),0)/60).toFixed(1);
   return `
-    ${cloudVerbunden ? `<div class="hint ok" style="margin-bottom:12px">☁️ Cloud-Sync aktiv — Stunden und Material werden automatisch übertragen, Aufträge automatisch aktuell gehalten. Fotos weiterhin über den Export unten.</div>` : `<div class="hint warn" style="margin-bottom:12px">⚠️ Cloud-Sync gerade nicht verbunden — Stunden/Material bleiben lokal gespeichert und werden automatisch nachgesendet, sobald wieder Internet da ist.</div>`}
+    ${cloudVerbunden ? `<div class="hint ok" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>☁️ Cloud-Sync aktiv — Stunden und Material werden automatisch übertragen, Aufträge automatisch aktuell gehalten. Fotos weiterhin über den Export unten.</span>
+      <button class="btn btn-ghost btn-sm" id="btnCloudNachholen" style="margin-left:auto">🔄 Alle Daten nachsenden</button>
+    </div>` : `<div class="hint warn" style="margin-bottom:12px">⚠️ Cloud-Sync gerade nicht verbunden — Stunden/Material bleiben lokal gespeichert und werden automatisch nachgesendet, sobald wieder Internet da ist.</div>`}
     <div class="card">
       <h2>Übersicht — alle Aufträge</h2>
       <div class="stat-row">
@@ -1198,6 +1213,15 @@ function bindExportTab(){
   });
   document.getElementById('export_keine_waehlen')?.addEventListener('click', ()=>{
     document.querySelectorAll('[data-export-auftrag]').forEach(cb=>cb.checked = false);
+  });
+  document.getElementById('btnCloudNachholen')?.addEventListener('click', async e=>{
+    const btn = e.currentTarget;
+    const alterText = btn.textContent;
+    btn.textContent = '⏳ sendet …'; btn.disabled = true;
+    cloudNachholSyncLief = false; // erzwingt erneutes Durchlaufen, auch wenn schon beim Start gelaufen
+    await cloudNachholSync();
+    zeigeToast(`✅ ${DB.zeiten.length} Zeiten + ${DB.material.length} Material an die Cloud gesendet`);
+    btn.textContent = alterText; btn.disabled = false;
   });
   document.getElementById('export_btn').addEventListener('click', async ()=>{
     const ausgewaehlteIds = new Set([...document.querySelectorAll('[data-export-auftrag]:checked')].map(cb=>cb.dataset.exportAuftrag));
@@ -1275,6 +1299,7 @@ function escapeHtml(str){
     await ladeAlles();
     render();
     cloudAuftraegeListenerStarten();
+    cloudNachholSync();
   }catch(err){
     document.getElementById('app').innerHTML = `<div style="padding:30px;color:#f3ead9;font-family:sans-serif">
       <h2>⚠️ Start fehlgeschlagen</h2>
