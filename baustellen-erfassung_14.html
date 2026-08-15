@@ -256,6 +256,14 @@ function cloudAuftraegeListenerStarten(){
     });
     if(geaendert){ speichereJetzt(); render(); }
   }, err=>console.warn('Cloud-Aufträge-Listener Fehler:', err));
+  cloudPfad('katalog').doc('aktuell').onSnapshot(doc=>{
+    if(!doc.exists) return;
+    const daten = doc.data();
+    DB.materialKatalog = daten.materialKatalog || [];
+    DB.beschlagKatalog = daten.beschlagKatalog || [];
+    speichereJetzt();
+    render();
+  }, err=>console.warn('Cloud-Katalog-Listener Fehler:', err));
 }
 </script>
 
