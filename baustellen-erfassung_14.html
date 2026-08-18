@@ -265,6 +265,15 @@ function cloudAuftraegeListenerStarten(){
   cloudPfad('auftraege').onSnapshot(snap=>{
     let geaendert = false;
     snap.docChanges().forEach(change=>{
+      if(change.type==='removed'){
+        const nochDa = DB.auftraege.some(a=>a.id===change.doc.id);
+        if(nochDa){
+          DB.auftraege = DB.auftraege.filter(a=>a.id!==change.doc.id);
+          if(DB.aktiverAuftragId===change.doc.id) DB.aktiverAuftragId = null;
+          geaendert = true;
+        }
+        return;
+      }
       const cloudAuftrag = {id:change.doc.id, ...change.doc.data()};
       const bestehend = DB.auftraege.find(a=>a.id===cloudAuftrag.id);
       if(bestehend){
