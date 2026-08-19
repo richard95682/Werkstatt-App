@@ -228,6 +228,11 @@ async function cloudSchreibeMaterial(eintrag){
   try{ await cloudPfad('material').doc(eintrag.id).set(eintrag); }
   catch(err){ console.warn('Cloud-Sync (Material) fehlgeschlagen, bleibt aber lokal gespeichert:', err); }
 }
+async function cloudSchreibeKantenIst(auftragId, daten){
+  if(!cloudVerbunden) return;
+  try{ await cloudPfad('kantenIst').doc(auftragId).set(daten); }
+  catch(err){ console.warn('Cloud-Sync (Kanten) fehlgeschlagen, bleibt aber lokal gespeichert:', err); }
+}
 async function neueZeitErfassung(eintrag){
   DB.zeiten.push(eintrag);
   await cloudSchreibeZeit(eintrag); // bewusst abgewartet, bevor die App-Oberfläche weitermacht — verhindert, dass ein
@@ -251,6 +256,9 @@ async function cloudNachholSync(){
   try{
     for(const z of DB.zeiten){ await cloudPfad('zeiten').doc(z.id).set(z); }
     for(const m of DB.material){ await cloudPfad('material').doc(m.id).set(m); }
+    for(const [auftragId, daten] of Object.entries(DB.kantenIst||{})){
+      await cloudPfad('kantenIst').doc(auftragId).set({auftragId, ...daten, aktualisiertAm:new Date().toISOString()});
+    }
     const lokaleMaterialIds = new Set(DB.material.map(m=>m.id));
     const cloudMaterialSnap = await cloudPfad('material').get();
     for(const doc of cloudMaterialSnap.docs){
@@ -359,6 +367,7 @@ const DB = {
   aktiverAuftragId: null,
   zeiten: [],          // {id, auftragId, mitarbeiter, datum, schritt, dauerMin, notiz, quelle:'stoppuhr'|'manuell'}
   material: [],         // {id, auftragId, mitarbeiter, datum, bezeichnung, menge, einheit}
+  kantenIst: {},         // {[auftragId]: {lfm, puVerleimung}} — direkt an MöbelKalks Nachkalkulation übertragen
   fotos: [],            // {id, auftragId, mitarbeiter, datum, dataUrl, notiz}
   stoppuhr: null,        // {startZeit, auftragId, schritt, pausiertSeit, pausenMs} oder null
   exportiertBis: null,   // ISO-Zeitstempel der letzten Export-Erstellung (nur Info)
@@ -375,9 +384,9 @@ function speichereBald(){
 }
 async function speichereJetzt(versuch=1){
   if(speicherTimer){ clearTimeout(speicherTimer); speicherTimer = null; }
-  const { mitarbeiter, auftraege, aktiverAuftragId, zeiten, material, fotos, stoppuhr, exportiertBis } = DB;
+  const { mitarbeiter, auftraege, aktiverAuftragId, zeiten, material, kantenIst, fotos, stoppuhr, exportiertBis } = DB;
   try{
-    await idbSet('daten', { mitarbeiter, auftraege, aktiverAuftragId, zeiten, material, fotos, stoppuhr, exportiertBis });
+    await idbSet('daten', { mitarbeiter, auftraege, aktiverAuftragId, zeiten, material, kantenIst, fotos, stoppuhr, exportiertBis });
   }catch(err){
     const nachricht = String(err?.message||err);
     // "Script execution context has stopped" passiert meist harmlos, wenn die Seite kurz pausiert wird
@@ -952,7 +961,18 @@ function renderMaterialTab(){
   const eintraege = DB.material.filter(m=>m.auftragId===a.id).sort((x,y)=>y.datum.localeCompare(x.datum));
   const bekannteMaterialien = a.materialien||[];
   const bekannteBeschlaege = a.beschlaege||[];
+  const kantenDaten = (DB.kantenIst||{})[a.id] || {lfm:0, puVerleimung:false};
   return `
+    <div class="card">
+      <h2>📏 Kantenmaterial</h2>
+      ${a.sollProSchritt ? `<div class="small" style="margin-bottom:8px;color:var(--text-dim2)">Wird direkt an die Nachkalkulation übertragen.</div>` : ''}
+      <label>Kanten gesamt (lfm)</label>
+      <input id="kanten_lfm" type="number" min="0" step="0.1" inputmode="decimal" value="${kantenDaten.lfm||0}">
+      <label class="besch-check-row" style="margin-top:12px;cursor:pointer">
+        <input type="checkbox" id="kanten_pu" ${kantenDaten.puVerleimung?'checked':''}>
+        <span class="besch-check-name">PU-Verleimung</span>
+      </label>
+    </div>
     <div class="card">
       <h2>Material erfassen</h2>
       ${bekannteMaterialien.length ? `
@@ -1004,6 +1024,16 @@ function renderMaterialTab(){
 }
 function bindMaterialTab(){
   const a = aktuellerAuftrag();
+  function speichereKantenIst(){
+    const lfm = parseFloat(document.getElementById('kanten_lfm').value)||0;
+    const puVerleimung = document.getElementById('kanten_pu').checked;
+    if(!DB.kantenIst) DB.kantenIst = {};
+    DB.kantenIst[a.id] = {lfm, puVerleimung};
+    speichereJetzt();
+    cloudSchreibeKantenIst(a.id, {auftragId:a.id, lfm, puVerleimung, aktualisiertAm:new Date().toISOString()});
+  }
+  document.getElementById('kanten_lfm').addEventListener('change', speichereKantenIst);
+  document.getElementById('kanten_pu').addEventListener('change', speichereKantenIst);
   function pruefeStueckUmrechnung(){
     const bez = document.getElementById('mat_bez').value.trim().toLowerCase();
     const treffer = DB.materialKatalog.find(m=>m.name.toLowerCase()===bez && m.m2ProStueck>0);
