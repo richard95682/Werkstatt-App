@@ -264,6 +264,11 @@ async function cloudNachholSync(){
     for(const doc of cloudMaterialSnap.docs){
       if(!lokaleMaterialIds.has(doc.id)) await cloudPfad('material').doc(doc.id).delete();
     }
+    const lokaleZeitenIds = new Set(DB.zeiten.map(z=>z.id));
+    const cloudZeitenSnap = await cloudPfad('zeiten').get();
+    for(const doc of cloudZeitenSnap.docs){
+      if(!lokaleZeitenIds.has(doc.id)) await cloudPfad('zeiten').doc(doc.id).delete();
+    }
   }catch(err){ console.warn('Cloud-Nachhol-Sync fehlgeschlagen:', err); }
 }
 let cloudAuftraegeListenerAktiv = false;
@@ -942,7 +947,12 @@ function bindZeitTab(){
     zeigeToast('Eingetragen ✓');
   });
   document.querySelectorAll('[data-del-zeit]').forEach(b=>b.addEventListener('click', async ()=>{
-    DB.zeiten = DB.zeiten.filter(z=>z.id!==b.dataset.delZeit);
+    const id = b.dataset.delZeit;
+    DB.zeiten = DB.zeiten.filter(z=>z.id!==id);
+    if(cloudVerbunden){
+      try{ await cloudPfad('zeiten').doc(id).delete(); }
+      catch(err){ console.warn('Cloud-Löschen (Zeit) fehlgeschlagen:', err); }
+    }
     await speichereJetzt(); render();
   }));
 }
