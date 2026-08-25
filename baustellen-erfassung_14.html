@@ -872,12 +872,26 @@ function renderZeitTab(){
       ${Object.keys(jeSchritt).length ? `<div class="schritt-summary">
         ${Object.entries(jeSchritt).map(([s,min])=>`<div class="schritt-summary-row"><span>${escapeHtml(s)}</span><b>${(min/60).toFixed(2)} Std.</b></div>`).join('')}
       </div>` : ''}
-      ${eintraege.length ? eintraege.map(z=>`
-        <div class="listitem">
-          <div class="icon">${z.quelle==='stoppuhr'?'⏱️':'✍️'}</div>
-          <div class="main"><div class="title">${escapeHtml(z.schritt)} · ${fmtDauer(z.dauerMin)}${z.km?` · ${z.km} km`:''}</div><div class="meta">${fmtDatum(z.datum)} · ${escapeHtml(z.mitarbeiter)}${z.notiz?' · '+escapeHtml(z.notiz):''}</div></div>
-          <div class="del" data-del-zeit="${z.id}">✕</div>
-        </div>`).join('') : `<div class="empty">Noch keine Zeit erfasst.</div>`}
+      ${(()=>{
+        // Nach Tag + Tätigkeit gruppieren, statt jeden einzelnen Stoppuhr-/Manuell-Eintrag separat aufzulisten
+        const gruppen = {};
+        eintraege.forEach(z=>{
+          const key = z.datum+'|'+z.schritt;
+          if(!gruppen[key]) gruppen[key] = {datum:z.datum, schritt:z.schritt, dauerMin:0, km:0, mitarbeiterSet:new Set(), notizen:[], ids:[]};
+          gruppen[key].dauerMin += (z.dauerMin||0);
+          gruppen[key].km += (z.km||0);
+          gruppen[key].mitarbeiterSet.add(z.mitarbeiter);
+          if(z.notiz) gruppen[key].notizen.push(z.notiz);
+          gruppen[key].ids.push(z.id);
+        });
+        const gruppenListe = Object.values(gruppen).sort((x,y)=>y.datum.localeCompare(x.datum));
+        return gruppenListe.length ? gruppenListe.map(g=>`
+          <div class="listitem">
+            <div class="icon">📅</div>
+            <div class="main"><div class="title">${escapeHtml(g.schritt)} · ${fmtDauer(g.dauerMin)}${g.km?` · ${g.km} km`:''}</div><div class="meta">${fmtDatum(g.datum)} · ${[...g.mitarbeiterSet].map(escapeHtml).join(', ')}${g.notizen.length?' · '+g.notizen.map(escapeHtml).join('; '):''}${g.ids.length>1?` · ${g.ids.length} Einträge`:''}</div></div>
+            <div class="del" data-del-zeitgruppe="${g.ids.join(',')}">✕</div>
+          </div>`).join('') : `<div class="empty">Noch keine Zeit erfasst.</div>`;
+      })()}
     </div>`;
 }
 function bindZeitTab(){
@@ -946,12 +960,18 @@ function bindZeitTab(){
     render();
     zeigeToast('Eingetragen ✓');
   });
-  document.querySelectorAll('[data-del-zeit]').forEach(b=>b.addEventListener('click', async ()=>{
-    const id = b.dataset.delZeit;
-    DB.zeiten = DB.zeiten.filter(z=>z.id!==id);
+  document.querySelectorAll('[data-del-zeitgruppe]').forEach(b=>b.addEventListener('click', async ()=>{
+    const ids = b.dataset.delZeitgruppe.split(',');
+    if(ids.length>1){
+      const ok = await bestaetigenDialog({titel:'Ganzen Tag löschen?', text:`Diese Zusammenfassung enthält ${ids.length} einzelne Erfassungen. Wirklich alle zusammen löschen?`});
+      if(!ok) return;
+    }
+    DB.zeiten = DB.zeiten.filter(z=>!ids.includes(z.id));
     if(cloudVerbunden){
-      try{ await cloudPfad('zeiten').doc(id).delete(); }
-      catch(err){ console.warn('Cloud-Löschen (Zeit) fehlgeschlagen:', err); }
+      for(const id of ids){
+        try{ await cloudPfad('zeiten').doc(id).delete(); }
+        catch(err){ console.warn('Cloud-Löschen (Zeit) fehlgeschlagen:', err); }
+      }
     }
     await speichereJetzt(); render();
   }));
