@@ -757,6 +757,7 @@ function renderTabbar(){
     {id:'zeit', ic:'⏱️', label:'Zeit'},
     {id:'material', ic:'📦', label:'Material'},
     {id:'fotos', ic:'📷', label:'Fotos'},
+    {id:'konto', ic:'📊', label:'Konto'},
     {id:'export', ic:'📤', label:'Export'},
   ];
   return `<nav class="tabbar">
@@ -766,7 +767,10 @@ function renderTabbar(){
 function bindTabbar(){
   document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click', ()=>{
     if(DB.stoppuhr) speichereJetzt(); // laufende Stoppuhr zwischenspeichern
-    aktiverTab = b.dataset.tab; render();
+    const neuerTab = b.dataset.tab;
+    const tabHatSichGeaendert = neuerTab !== aktiverTab;
+    aktiverTab = neuerTab; render();
+    if(neuerTab==='konto' && tabHatSichGeaendert) ladeKontoDatenUndRender();
   }));
 }
 
@@ -775,6 +779,7 @@ function renderTabInhalt(){
   if(aktiverTab==='zeit') return renderZeitTab();
   if(aktiverTab==='material') return renderMaterialTab();
   if(aktiverTab==='fotos') return renderFotosTab();
+  if(aktiverTab==='konto') return renderKontoTab();
   if(aktiverTab==='export') return renderExportTab();
   return '';
 }
@@ -782,6 +787,7 @@ function bindTabInhalt(){
   if(aktiverTab==='zeit') bindZeitTab();
   if(aktiverTab==='material') bindMaterialTab();
   if(aktiverTab==='fotos') bindFotosTab();
+  if(aktiverTab==='konto') bindKontoTab();
   if(aktiverTab==='export') bindExportTab();
 }
 
@@ -1237,6 +1243,86 @@ async function spieleSicherungEin(e){
     alert('⚠️ Datei konnte nicht gelesen werden: ' + (err.message||err));
   }
 }
+/* ============================= TAB: KONTO (persönliches Zeitkonto) ============================= */
+let kontoCloudDaten = null; // zuletzt aus der Cloud geladene Zeitkonto-Einstellungen (mitarbeiter1/2)
+async function ladeKontoCloudDaten(){
+  if(!cloudVerbunden) return null;
+  try{
+    const doc = await cloudPfad('zeitkonto').doc('aktuell').get();
+    return doc.exists ? doc.data() : null;
+  }catch(err){ console.warn('Zeitkonto-Laden fehlgeschlagen:', err); return null; }
+}
+function findeEigenenZeitkontoEintrag(daten){
+  if(!daten || !DB.mitarbeiter) return null;
+  const eigenerName = DB.mitarbeiter.trim().toLowerCase();
+  if(daten.mitarbeiter1?.name && daten.mitarbeiter1.name.trim().toLowerCase()===eigenerName) return daten.mitarbeiter1;
+  if(daten.mitarbeiter2?.name && daten.mitarbeiter2.name.trim().toLowerCase()===eigenerName) return daten.mitarbeiter2;
+  return null;
+}
+function renderKontoTab(){
+  if(!cloudVerbunden){
+    return `<div class="card"><div class="empty"><div class="big">☁️</div>Keine Internetverbindung. Das Zeitkonto braucht eine Verbindung zur Cloud, um die aktuellen Werte zu holen.</div></div>`;
+  }
+  const eintrag = findeEigenenZeitkontoEintrag(kontoCloudDaten);
+  if(!eintrag || !eintrag.monatslohn || !eintrag.satz){
+    return `<div class="card"><div class="empty"><div class="big">📊</div>Kein Zeitkonto eingerichtet. Für deinen Namen ist in MöbelKalk noch kein Monatslohn/Stundenlohn hinterlegt — das müsste der Chef dort einmalig eintragen.</div></div>`;
+  }
+  const sollMonat = (eintrag.sollMonatManuell!==null && eintrag.sollMonatManuell!==undefined && eintrag.sollMonatManuell!=='') ? parseFloat(eintrag.sollMonatManuell) : eintrag.monatslohn/eintrag.satz;
+  let monate = 1;
+  if(eintrag.beginn){
+    const start = new Date(eintrag.beginn), heute = new Date();
+    monate = Math.max(1, (heute.getFullYear()-start.getFullYear())*12 + (heute.getMonth()-start.getMonth()) + 1);
+  }
+  const sollGesamt = sollMonat*monate;
+  const istAutomatisch = (kontoIstAutomatisch||0);
+  const istGesamt = istAutomatisch + (eintrag.basisStunden||0);
+  const diff = istGesamt-sollGesamt;
+  const balkenProzent = sollGesamt>0 ? Math.min(100, (istGesamt/sollGesamt)*100) : 0;
+  return `<div class="card">
+    <h2>📊 Mein Zeitkonto</h2>
+    <div class="small" style="margin-bottom:14px">Läuft automatisch aus den in MöbelKalk hinterlegten Werten und deinen tatsächlich erfassten Stunden.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:14px;font-size:15px">
+      <div>
+        <div class="small" style="font-weight:700;text-transform:uppercase;letter-spacing:.3px;opacity:.6;margin-bottom:8px">Soll</div>
+        <div style="margin-bottom:6px">Monate seit Beginn: <b>${monate}</b></div>
+        <div style="margin-bottom:6px">Soll-Std./Monat: <b>${sollMonat.toFixed(1)}</b></div>
+        <div>Soll-Stunden gesamt: <b>${fmtDauer(sollGesamt*60)}</b></div>
+      </div>
+      <div>
+        <div class="small" style="font-weight:700;text-transform:uppercase;letter-spacing:.3px;opacity:.6;margin-bottom:8px">Ist</div>
+        <div style="margin-bottom:6px">Automatisch erfasst: <b>${fmtDauer(istAutomatisch*60)}</b></div>
+        ${eintrag.basisStunden ? `<div style="margin-bottom:6px">Basis-Stunden: <b>${fmtDauer(eintrag.basisStunden*60)}</b></div>` : ''}
+        <div>Ist-Stunden gesamt: <b>${fmtDauer(istGesamt*60)}</b></div>
+      </div>
+    </div>
+    <div style="background:var(--card-2);border-radius:8px;height:30px;overflow:hidden;position:relative;margin-bottom:8px">
+      <div style="background:${diff>=0?'#7a9471':'#a4453a'};height:100%;width:${balkenProzent}%;transition:width .3s"></div>
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">${fmtDauer(istGesamt*60)} / ${fmtDauer(sollGesamt*60)}</div>
+    </div>
+    <div style="font-size:14px">Δ <b style="color:${diff>=0?'#7a9471':'#a4453a'}">${diff>=0?'+':''}${fmtDauer(Math.abs(diff)*60)}</b> ${diff>=0?'über Soll':'unter Soll'}</div>
+  </div>`;
+}
+let kontoIstAutomatisch = 0;
+function bindKontoTab(){
+  // Absichtlich leer: das eigentliche Laden passiert einmalig beim Tab-Wechsel (siehe bindTabbar),
+  // nicht bei jedem Render-Durchlauf — sonst würde sich render() und das Nachladen gegenseitig endlos antriggern.
+}
+async function ladeKontoDatenUndRender(){
+  kontoCloudDaten = await ladeKontoCloudDaten();
+  const eintrag = findeEigenenZeitkontoEintrag(kontoCloudDaten);
+  if(eintrag && cloudVerbunden){
+    try{
+      const snap = await cloudPfad('zeiten').get();
+      const eigenerName = DB.mitarbeiter.trim().toLowerCase();
+      kontoIstAutomatisch = snap.docs
+        .map(d=>d.data())
+        .filter(z=>(z.mitarbeiter||'').trim().toLowerCase()===eigenerName)
+        .reduce((sum,z)=>sum+(z.dauerMin||0)/60, 0);
+    }catch(err){ console.warn('Ist-Stunden laden fehlgeschlagen:', err); }
+  }
+  if(aktiverTab==='konto') render(); // nur neu zeichnen, falls der Nutzer den Tab in der Zwischenzeit nicht verlassen hat
+}
+
 function renderExportTab(){
   const zeitAnzahl = DB.zeiten.length, matAnzahl = DB.material.length, fotoAnzahl = DB.fotos.length;
   const gesamtStd = (DB.zeiten.reduce((s,z)=>s+(z.dauerMin||0),0)/60).toFixed(1);
