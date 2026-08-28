@@ -876,12 +876,24 @@ function renderZeitTab(){
           gruppen[key].ids.push(z.id);
         });
         const gruppenListe = Object.values(gruppen).sort((x,y)=>y.datum.localeCompare(x.datum));
-        return gruppenListe.length ? gruppenListe.map(g=>`
+        // Tagesgesamt je Datum berechnen, um es zusätzlich als eigene Zeile pro Tag einzufügen
+        const tagesgesamt = {};
+        gruppenListe.forEach(g=>{ tagesgesamt[g.datum] = (tagesgesamt[g.datum]||0) + g.dauerMin; });
+        let letztesDatum = null;
+        return gruppenListe.length ? gruppenListe.map(g=>{
+          const tagWechsel = g.datum !== letztesDatum;
+          letztesDatum = g.datum;
+          const monatKurz = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'][parseInt(g.datum.slice(5,7),10)-1];
+          const tagNr = parseInt(g.datum.slice(8,10),10);
+          return `${tagWechsel ? `<div class="checkline" style="border-top:1px dashed var(--line);padding-top:8px;margin-top:8px"><b class="small">${fmtDatum(g.datum)}</b><span class="small" style="margin-left:auto;opacity:.75">Tagesgesamt: ${fmtDauer(tagesgesamt[g.datum])}</span></div>` : ''}
           <div class="listitem">
-            <div class="icon">📅</div>
-            <div class="main"><div class="title">${escapeHtml(g.schritt)} · ${fmtDauer(g.dauerMin)}${g.km?` · ${g.km} km`:''}</div><div class="meta">${fmtDatum(g.datum)} · ${[...g.mitarbeiterSet].map(escapeHtml).join(', ')}${g.notizen.length?' · '+g.notizen.map(escapeHtml).join('; '):''}${g.ids.length>1?` · ${g.ids.length} Einträge`:''}</div></div>
+            <div class="icon" style="flex-direction:column;line-height:1;padding:2px 0">
+              <span style="font-size:8px;font-weight:700;color:var(--danger,#c0504d);text-transform:uppercase">${monatKurz}</span>
+              <span style="font-size:15px;font-weight:800">${tagNr}</span>
+            </div>
+            <div class="main"><div class="title">${escapeHtml(g.schritt)} · ${fmtDauer(g.dauerMin)}${g.km?` · ${g.km} km`:''}</div><div class="meta">${[...g.mitarbeiterSet].map(escapeHtml).join(', ')}${g.notizen.length?' · '+g.notizen.map(escapeHtml).join('; '):''}${g.ids.length>1?` · ${g.ids.length} Einträge`:''}</div></div>
             <div class="del" data-del-zeitgruppe="${g.ids.join(',')}">✕</div>
-          </div>`).join('') : `<div class="empty">Noch keine Zeit erfasst.</div>`;
+          </div>`;}).join('') : `<div class="empty">Noch keine Zeit erfasst.</div>`;
       })()}
     </div>`;
 }
