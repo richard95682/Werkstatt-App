@@ -545,13 +545,6 @@ function renderAuftragAuswahlVollbild(){
       </div>`;
       })()}
       <div class="card">
-        <h2>Aus MöbelKalk übernehmen</h2>
-        <div style="font-size:13px; color:var(--text-dim2); margin-bottom:12px; line-height:1.5">Projektliste-Datei aus MöbelKalk importieren — bestehende Aufträge werden aktualisiert, neue automatisch angelegt. Soll-Stunden je Fertigungsschritt werden mit übernommen und beim Erfassen zum Vergleich angezeigt.</div>
-        <input type="file" id="projektliste_input" accept="application/json" style="display:none">
-        <button class="btn ghost full" id="projektliste_btn">📥 Projektliste importieren</button>
-        <div id="import_status"></div>
-      </div>
-      <div class="card">
         <h2>Neuer Auftrag</h2>
         <label>Auftragsbezeichnung</label>
         <input id="na_name" placeholder="z. B. Einbauschrank Riedler">
@@ -613,39 +606,6 @@ function bindAuftragAuswahlVollbild(){
       render();
     }catch(err){
       alert('Fehler beim Anlegen des Auftrags: ' + (err.message||err) + '\n\nBitte prüfe, ob die App über Safari geöffnet wurde (nicht in einer Vorschau) und nicht im privaten Modus läuft.');
-    }
-  });
-  document.getElementById('projektliste_btn').addEventListener('click', ()=>document.getElementById('projektliste_input').click());
-  document.getElementById('projektliste_input').addEventListener('change', async e=>{
-    const file = e.target.files[0];
-    e.target.value = '';
-    if(!file) return;
-    const statusEl = document.getElementById('import_status');
-    try{
-      const text = await file.text();
-      const daten = JSON.parse(text);
-      if(daten.typ !== 'moebelkalk-projektliste'){
-        statusEl.innerHTML = `<div class="import-msg warn">⚠️ Das ist keine gültige MöbelKalk-Projektliste.</div>`;
-        return;
-      }
-      DB.materialKatalog = daten.materialKatalog || DB.materialKatalog;
-      DB.beschlagKatalog = daten.beschlagKatalog || DB.beschlagKatalog;
-      let neuAngelegt = 0, aktualisiert = 0;
-      (daten.projekte||[]).forEach(pImport=>{
-        const bestehend = DB.auftraege.find(a=>a.id===pImport.id);
-        if(bestehend){
-          bestehend.name = pImport.name; bestehend.kunde = pImport.kunde; bestehend.sollProSchritt = pImport.sollProSchritt||{}; bestehend.materialien = pImport.materialien||[]; bestehend.beschlaege = pImport.beschlaege||[];
-          aktualisiert++;
-        } else {
-          DB.auftraege.push({id:pImport.id, name:pImport.name, kunde:pImport.kunde, sollProSchritt:pImport.sollProSchritt||{}, materialien:pImport.materialien||[], beschlaege:pImport.beschlaege||[]});
-          neuAngelegt++;
-        }
-      });
-      await speichereJetzt();
-      zeigeToast(`✅ ${neuAngelegt} neue, ${aktualisiert} aktualisierte Aufträge übernommen`);
-      render();
-    }catch(err){
-      statusEl.innerHTML = `<div class="import-msg warn">⚠️ Datei konnte nicht gelesen werden.</div>`;
     }
   });
 }
