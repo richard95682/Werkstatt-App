@@ -281,11 +281,11 @@ function cloudAuftraegeListenerStarten(){
       const cloudAuftrag = {id:change.doc.id, ...change.doc.data()};
       const bestehend = DB.auftraege.find(a=>a.id===cloudAuftrag.id);
       if(bestehend){
-        bestehend.name = cloudAuftrag.name; bestehend.kunde = cloudAuftrag.kunde;
+        bestehend.name = cloudAuftrag.name; bestehend.kunde = cloudAuftrag.kunde; bestehend.status = cloudAuftrag.status||'Kalkulation';
         bestehend.sollProSchritt = cloudAuftrag.sollProSchritt||{};
         bestehend.materialien = cloudAuftrag.materialien||[]; bestehend.beschlaege = cloudAuftrag.beschlaege||[];
       } else {
-        DB.auftraege.push({id:cloudAuftrag.id, name:cloudAuftrag.name, kunde:cloudAuftrag.kunde, sollProSchritt:cloudAuftrag.sollProSchritt||{}, materialien:cloudAuftrag.materialien||[], beschlaege:cloudAuftrag.beschlaege||[]});
+        DB.auftraege.push({id:cloudAuftrag.id, name:cloudAuftrag.name, kunde:cloudAuftrag.kunde, status:cloudAuftrag.status||'Kalkulation', sollProSchritt:cloudAuftrag.sollProSchritt||{}, materialien:cloudAuftrag.materialien||[], beschlaege:cloudAuftrag.beschlaege||[]});
       }
       geaendert = true;
     });
@@ -367,6 +367,7 @@ const DB = {
   fotos: [],            // {id, auftragId, mitarbeiter, datum, dataUrl, notiz}
   stoppuhr: null,        // {startZeit, auftragId, schritt, pausiertSeit, pausenMs} oder null
   exportiertBis: null,   // ISO-Zeitstempel der letzten Export-Erstellung (nur Info)
+  nurFertigungAnzeigen: false, // Filter: nur Aufträge zeigen, die in MöbelKalk auf "Fertigung" stehen
 };
 
 async function ladeAlles(){
@@ -526,13 +527,23 @@ function renderAuftragAuswahlVollbild(){
       <div class="sub">Hallo ${DB.mitarbeiter} 👋 — für welchen Auftrag erfasst du gerade?</div>
     </div>
     <main>
-      ${DB.auftraege.length ? `<div class="card"><h2>Deine Aufträge</h2>
-        ${DB.auftraege.map(a=>`<div class="listitem" data-waehle-auftrag="${a.id}" style="cursor:pointer">
+      <div class="card" style="padding-bottom:6px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px">
+          <input type="checkbox" id="ob_nur_fertigung" ${DB.nurFertigungAnzeigen?'checked':''}>
+          Nur Aufträge in Fertigung anzeigen (blendet reine Kalkulationen aus)
+        </label>
+      </div>
+      ${(()=>{
+        const gefiltert = DB.nurFertigungAnzeigen ? DB.auftraege.filter(a=>a.status==='Fertigung') : DB.auftraege;
+        if(!gefiltert.length) return `<div class="empty"><div class="big">📁</div>${DB.nurFertigungAnzeigen && DB.auftraege.length ? 'Aktuell kein Auftrag in Fertigung.' : 'Noch keine Aufträge angelegt.'}</div>`;
+        return `<div class="card"><h2>Deine Aufträge</h2>
+        ${gefiltert.map(a=>`<div class="listitem" data-waehle-auftrag="${a.id}" style="cursor:pointer">
           <div class="icon">📁</div>
           <div class="main"><div class="title">${escapeHtml(a.name)}</div>${a.kunde?`<div class="meta">${escapeHtml(a.kunde)}</div>`:''}</div>
           <div class="listitem-del del" data-loesche-auftrag="${a.id}">✕</div>
         </div>`).join('')}
-      </div>` : `<div class="empty"><div class="big">📁</div>Noch keine Aufträge angelegt.</div>`}
+      </div>`;
+      })()}
       <div class="card">
         <h2>Aus MöbelKalk übernehmen</h2>
         <div style="font-size:13px; color:var(--text-dim2); margin-bottom:12px; line-height:1.5">Projektliste-Datei aus MöbelKalk importieren — bestehende Aufträge werden aktualisiert, neue automatisch angelegt. Soll-Stunden je Fertigungsschritt werden mit übernommen und beim Erfassen zum Vergleich angezeigt.</div>
@@ -561,6 +572,10 @@ function bindAuftragAuswahlVollbild(){
     document.getElementById('ruecksichern_btn_start')?.addEventListener('click', ()=>document.getElementById('ruecksichern_input_start').click());
     document.getElementById('ruecksichern_input_start')?.addEventListener('change', e=>spieleSicherungEin(e));
   }
+  document.getElementById('ob_nur_fertigung')?.addEventListener('change', async e=>{
+    DB.nurFertigungAnzeigen = e.target.checked;
+    await speichereJetzt(); render();
+  });
   document.querySelectorAll('[data-waehle-auftrag]').forEach(el=>el.addEventListener('click', async e=>{
     if(e.target.closest('[data-loesche-auftrag]')) return;
     DB.aktiverAuftragId = el.dataset.waehleAuftrag;
