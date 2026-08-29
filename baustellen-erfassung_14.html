@@ -1460,6 +1460,23 @@ function escapeHtml(str){
 }
 
 /* ============================= START ============================= */
+async function bereinigeVerwaisteAuftraege(){
+  // Der Echtzeit-Listener fängt Löschungen nur ab, während die App aktiv verbunden ist. War die App beim
+  // Löschen in MöbelKalk geschlossen, bleibt der Auftrag sonst dauerhaft lokal hängen — hier beim Start
+  // einmalig gegen den aktuellen Cloud-Stand abgleichen (analog zur Bereinigung auf der MöbelKalk-Seite).
+  if(!cloudVerbunden || !DB.auftraege.length) return;
+  try{
+    const cloudSnap = await cloudPfad('auftraege').get();
+    const cloudIds = new Set(cloudSnap.docs.map(d=>d.id));
+    const vorherAnzahl = DB.auftraege.length;
+    DB.auftraege = DB.auftraege.filter(a=>cloudIds.has(a.id));
+    if(DB.auftraege.length!==vorherAnzahl){
+      if(DB.aktiverAuftragId && !DB.auftraege.some(a=>a.id===DB.aktiverAuftragId)) DB.aktiverAuftragId = null;
+      await speichereJetzt();
+      render();
+    }
+  }catch(err){ console.warn('Abgleich verwaister Aufträge fehlgeschlagen:', err); }
+}
 (async function init(){
   try{
     await openDB();
@@ -1467,6 +1484,7 @@ function escapeHtml(str){
     render();
     cloudAuftraegeListenerStarten();
     cloudNachholSync();
+    bereinigeVerwaisteAuftraege();
   }catch(err){
     document.getElementById('app').innerHTML = `<div style="padding:30px;color:#f3ead9;font-family:sans-serif">
       <h2>⚠️ Start fehlgeschlagen</h2>
