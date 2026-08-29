@@ -351,14 +351,13 @@ const STANDARD_SCHRITTE = ['AV','Zuschnitt','Kanten','Zusammenbau','CNC-Bearbeit
 const BAUSTELLE_SCHRITT = 'Baustellenmontage';
 function alleSchritte(){
   const a = aktuellerAuftrag();
-  // Liegt für diesen Auftrag eine Kalkulation aus MöbelKalk vor (mit geplanten Fertigungsschritten),
-  // werden NUR diese angezeigt — nicht die generische Standardliste. Ohne Kalkulation (z.B. direkt in
-  // der App angelegte Aufträge) bleibt die Standardliste als sinnvolle Grundlage bestehen.
-  if(a?.sollProSchritt && Object.keys(a.sollProSchritt).length){
-    return Object.keys(a.sollProSchritt);
-  }
-  const eigene = [...new Set(DB.zeiten.map(z=>z.schritt).filter(s=>s && !STANDARD_SCHRITTE.includes(s)))];
-  return [...STANDARD_SCHRITTE, ...eigene];
+  // Grundliste: Bei vorhandener Kalkulation aus MöbelKalk die dort geplanten Fertigungsschritte,
+  // sonst die generische Standardliste (z.B. bei direkt in der App angelegten Aufträgen).
+  const grundliste = (a?.sollProSchritt && Object.keys(a.sollProSchritt).length) ? Object.keys(a.sollProSchritt) : STANDARD_SCHRITTE;
+  // Eigene, für DIESEN Auftrag manuell verwendete Sonder-Schritte bleiben zusätzlich bestehen — nur
+  // Schritte von einem GANZ ANDEREN Auftrag werden nicht mit übernommen.
+  const eigene = [...new Set(DB.zeiten.filter(z=>z.auftragId===a?.id).map(z=>z.schritt).filter(s=>s && !grundliste.includes(s)))];
+  return [...grundliste, ...eigene];
 }
 
 const DB = {
