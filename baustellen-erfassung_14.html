@@ -528,9 +528,9 @@ function renderAuftragAuswahlVollbild(){
     </div>
     <main>
       <div class="card" style="padding-bottom:6px">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px">
-          <input type="checkbox" id="ob_nur_fertigung" ${DB.nurFertigungAnzeigen?'checked':''}>
-          Nur Aufträge in Fertigung anzeigen (blendet reine Kalkulationen aus)
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:14px">
+          <input type="checkbox" id="ob_nur_fertigung" ${DB.nurFertigungAnzeigen?'checked':''} style="width:18px;height:18px;flex-shrink:0;margin:2px 0 0 0;accent-color:var(--accent)">
+          <span style="flex:1;min-width:0;text-transform:none;font-weight:400;color:var(--text)">Nur Aufträge in Fertigung anzeigen (blendet reine Kalkulationen aus)</span>
         </label>
       </div>
       ${(()=>{
