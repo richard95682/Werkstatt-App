@@ -235,8 +235,8 @@ function cloudSyncZeitkontoDebounced(){
   cloudZeitkontoSyncTimer = setTimeout(async ()=>{
     const s = DB.settings;
     await cloudPfad('zeitkonto').doc('aktuell').set({
-      mitarbeiter1: {name:s.mitarbeiter1Name, monatslohn:s.mitarbeiter1Monatslohn||0, satz:s.mitarbeiter1Satz||0, beginn:s.mitarbeiter1Beginn||'', basisStunden:s.mitarbeiter1BasisStunden||0, sollMonatManuell:s.mitarbeiter1SollMonatManuell||null},
-      mitarbeiter2: {name:s.mitarbeiter2Name, monatslohn:s.mitarbeiter2Monatslohn||0, satz:s.mitarbeiter2Satz||0, beginn:s.mitarbeiter2Beginn||'', basisStunden:s.mitarbeiter2BasisStunden||0, sollMonatManuell:s.mitarbeiter2SollMonatManuell||null},
+      mitarbeiter1: {name:s.mitarbeiter1Name, monatslohn:s.mitarbeiter1Monatslohn||0, satz:s.mitarbeiter1StundenlohnTatsaechlich||0, beginn:s.mitarbeiter1Beginn||'', basisStunden:s.mitarbeiter1BasisStunden||0, sollMonatManuell:s.mitarbeiter1SollMonatManuell||null},
+      mitarbeiter2: {name:s.mitarbeiter2Name, monatslohn:s.mitarbeiter2Monatslohn||0, satz:s.mitarbeiter2StundenlohnTatsaechlich||0, beginn:s.mitarbeiter2Beginn||'', basisStunden:s.mitarbeiter2BasisStunden||0, sollMonatManuell:s.mitarbeiter2SollMonatManuell||null},
       aktualisiertAm: new Date().toISOString()
     });
   }, 1500);
@@ -459,7 +459,7 @@ async function cloudDatenJetztAbrufen(erzwingen=false){
       DB.projects.push({id:doc.id, name:cloudAuftrag.name||'Unbenannt', kunde:cloudAuftrag.kunde||'', status:cloudAuftrag.status||'Kalkulation', datum:new Date().toISOString().slice(0,10), kalkulation:null});
       ausAppUebernommen++;
     }
-    if(ausAppUebernommen>0) await save('projects');
+    if(ausAppUebernommen>0){ await save('projects'); neu += ausAppUebernommen; } // zählt mit, damit die Seite sich automatisch neu zeichnet
   }catch(err){ console.warn('Übernahme neuer Aufträge aus der App fehlgeschlagen:', err); }
   for(const doc of zeitenSnap.docs){
     const z = {id:doc.id, ...doc.data()};
@@ -543,6 +543,7 @@ const DEFAULTS = {
   settings: {stundensatz:42, stundensatzBaustelle:42, kantenpreis:2.1, kmPauschale:0.5, zuschlagKorpus:20, zuschlagFront:20, zuschlagRueckwand:20, zuschlagZusatzplatten:20, gewinnMaterial:20, gewinnKanten:20, gewinnBeschlaege:20, gewinnZusatz:20, standardLieferkosten:0, standardKleinmaterial:0,
     puVerleimungSchwelleLfm:130, puVerleimungPreis:25,
     mitarbeiter1Name:'Mitarbeiter 1', mitarbeiter1Satz:42, mitarbeiter2Name:'Mitarbeiter 2', mitarbeiter2Satz:42,
+    mitarbeiter1StundenlohnTatsaechlich:0, mitarbeiter2StundenlohnTatsaechlich:0,
     mitarbeiter1Monatslohn:0, mitarbeiter1Beginn:'', mitarbeiter2Monatslohn:0, mitarbeiter2Beginn:'',
     mitarbeiter1SollManuell:null, mitarbeiter1IstKorrektur:0, mitarbeiter2SollManuell:null, mitarbeiter2IstKorrektur:0,
     mitarbeiter1MonateManuell:null, mitarbeiter1IstManuell:null, mitarbeiter2MonateManuell:null, mitarbeiter2IstManuell:null,
@@ -3791,28 +3792,28 @@ function renderArbeitszeit(el){
     <div class="pagehead"><div><h1>Arbeitszeit</h1><p>Zeitkonto-Verwaltung und Übersicht, an welchen Projekten die Mitarbeiter gearbeitet haben.</p></div></div>
     <div class="card">
       <h3>🕐 Zeitkonto-Einstellungen (für Minijob/Teilzeit mit festem Monatslohn)</h3>
-      <div class="small" style="margin-bottom:8px">Soll-Stunden pro Monat werden automatisch aus Monatslohn ÷ Stundenlohn berechnet. Leer lassen, wenn kein Zeitkonto benötigt wird.</div>
+      <div class="small" style="margin-bottom:8px">Soll-Stunden pro Monat werden automatisch aus Monatslohn ÷ tatsächlichem Stundenlohn berechnet. Das ist der reale Lohn, NICHT der Verrechnungssatz aus den Einstellungen (der für die Preiskalkulation genutzt wird). Leer lassen, wenn kein Zeitkonto benötigt wird.</div>
       <div class="field-row-inline" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:8px">
         <div class="field" style="flex:1;margin:0"><label>${s.mitarbeiter1Name}: Monatslohn</label><input type="number" step="1" id="az_ma1lohn" value="${s.mitarbeiter1Monatslohn||''}" placeholder="z. B. 605"></div>
         <span class="small" style="padding-bottom:10px">€</span>
-        <div class="field" style="width:110px;margin:0"><label>Stundenlohn</label><input type="number" step="0.5" id="az_ma1satz" value="${s.mitarbeiter1Satz||''}" placeholder="z. B. 14"></div>
+        <div class="field" style="width:130px;margin:0"><label>Tatsächlicher Lohn</label><input type="number" step="0.5" id="az_ma1satz" value="${s.mitarbeiter1StundenlohnTatsaechlich||''}" placeholder="z. B. 14"></div>
         <span class="small" style="padding-bottom:10px">€/Std.</span>
         <div class="field" style="flex:1;margin:0"><label>Beschäftigt seit</label><input type="date" id="az_ma1beginn" value="${s.mitarbeiter1Beginn||''}"></div>
       </div>
       <div class="field-row-inline" style="display:flex;gap:10px;align-items:flex-end">
         <div class="field" style="flex:1;margin:0"><label>${s.mitarbeiter2Name}: Monatslohn</label><input type="number" step="1" id="az_ma2lohn" value="${s.mitarbeiter2Monatslohn||''}" placeholder="z. B. 605"></div>
         <span class="small" style="padding-bottom:10px">€</span>
-        <div class="field" style="width:110px;margin:0"><label>Stundenlohn</label><input type="number" step="0.5" id="az_ma2satz" value="${s.mitarbeiter2Satz||''}" placeholder="z. B. 14"></div>
+        <div class="field" style="width:130px;margin:0"><label>Tatsächlicher Lohn</label><input type="number" step="0.5" id="az_ma2satz" value="${s.mitarbeiter2StundenlohnTatsaechlich||''}" placeholder="z. B. 14"></div>
         <span class="small" style="padding-bottom:10px">€/Std.</span>
         <div class="field" style="flex:1;margin:0"><label>Beschäftigt seit</label><input type="date" id="az_ma2beginn" value="${s.mitarbeiter2Beginn||''}"></div>
       </div>
       <div class="btn-row"><button class="btn btn-primary" id="az_ma_save">Speichern</button></div>
     </div>
-    ${(s.mitarbeiter1Monatslohn && s.mitarbeiter1Satz) || (s.mitarbeiter2Monatslohn && s.mitarbeiter2Satz) ? `<div class="card">
+    ${(s.mitarbeiter1Monatslohn && s.mitarbeiter1StundenlohnTatsaechlich) || (s.mitarbeiter2Monatslohn && s.mitarbeiter2StundenlohnTatsaechlich) ? `<div class="card">
       <h3>🕐 Zeitkonto-Übersicht</h3>
-      <div class="small" style="margin-bottom:12px">Läuft komplett automatisch aus Monatslohn, Stundenlohn, Beschäftigt-seit-Datum und den tatsächlich in der Nachkalkulation erfassten Stunden.</div>
-      ${zeitkontoZeile('1', s.mitarbeiter1Name, s.mitarbeiter1Monatslohn, s.mitarbeiter1Satz)}
-      ${zeitkontoZeile('2', s.mitarbeiter2Name, s.mitarbeiter2Monatslohn, s.mitarbeiter2Satz)}
+      <div class="small" style="margin-bottom:12px">Läuft komplett automatisch aus Monatslohn, tatsächlichem Stundenlohn, Beschäftigt-seit-Datum und den tatsächlich in der Nachkalkulation erfassten Stunden.</div>
+      ${zeitkontoZeile('1', s.mitarbeiter1Name, s.mitarbeiter1Monatslohn, s.mitarbeiter1StundenlohnTatsaechlich)}
+      ${zeitkontoZeile('2', s.mitarbeiter2Name, s.mitarbeiter2Monatslohn, s.mitarbeiter2StundenlohnTatsaechlich)}
     </div>` : ''}
     <div class="card">
       <h3>📋 Übersicht — Stunden je Mitarbeiter und Projekt</h3>
@@ -3837,10 +3838,10 @@ function renderArbeitszeit(el){
   }));
   el.querySelector('#az_ma_save').addEventListener('click', async ()=>{
     DB.settings.mitarbeiter1Monatslohn = parseFloat(document.getElementById('az_ma1lohn').value)||0;
-    DB.settings.mitarbeiter1Satz = parseFloat(document.getElementById('az_ma1satz').value)||0;
+    DB.settings.mitarbeiter1StundenlohnTatsaechlich = parseFloat(document.getElementById('az_ma1satz').value)||0;
     DB.settings.mitarbeiter1Beginn = document.getElementById('az_ma1beginn').value;
     DB.settings.mitarbeiter2Monatslohn = parseFloat(document.getElementById('az_ma2lohn').value)||0;
-    DB.settings.mitarbeiter2Satz = parseFloat(document.getElementById('az_ma2satz').value)||0;
+    DB.settings.mitarbeiter2StundenlohnTatsaechlich = parseFloat(document.getElementById('az_ma2satz').value)||0;
     DB.settings.mitarbeiter2Beginn = document.getElementById('az_ma2beginn').value;
     await save('settings'); renderMain();
   });
@@ -4826,7 +4827,7 @@ function renderEinstellungen(el){
       <div class="checkline"><span>Stundensatz</span><input type="number" step="0.5" id="s_stundensatz" value="${s.stundensatz}" style="width:90px;margin-left:auto"><span class="small">€/Std.</span></div>
       <div class="checkline"><span>Stundensatz Baustellenmontage</span><input type="number" step="0.5" id="s_stundensatzBaustelle" value="${s.stundensatzBaustelle}" style="width:90px;margin-left:auto"><span class="small">€/Std.</span></div>
       <div class="small" style="font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin:12px 0 4px;border-top:1px dashed var(--border);padding-top:10px">👷 Mitarbeiter mit eigenem Stundensatz</div>
-      <div class="small" style="margin-bottom:8px">Wird bei der Arbeitszeit in der Kalkulation je Position auswählbar — praktisch, wenn zwei Mitarbeiter mit unterschiedlichem Satz an einem Auftrag arbeiten.</div>
+      <div class="small" style="margin-bottom:8px">Wird bei der Arbeitszeit in der Kalkulation je Position auswählbar — praktisch, wenn zwei Mitarbeiter mit unterschiedlichem Satz an einem Auftrag arbeiten. <b>Das ist der Verrechnungssatz für die Preiskalkulation</b> (nicht der tatsächliche Lohn) — den tatsächlichen Stundenlohn für das Zeitkonto trägst du unter „⏱️ Arbeitszeit" ein.</div>
       <div class="field-row-inline" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:8px">
         <div class="field" style="flex:1;margin:0"><label>Name Mitarbeiter 1</label><input id="s_ma1name" value="${s.mitarbeiter1Name}"></div>
         <div style="width:90px"><input type="number" step="0.5" id="s_ma1satz" value="${s.mitarbeiter1Satz}"></div>

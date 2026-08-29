@@ -350,6 +350,13 @@ function idbSet(key,val){
 const STANDARD_SCHRITTE = ['AV','Zuschnitt','Kanten','Zusammenbau','CNC-Bearbeitung','Oberfläche'];
 const BAUSTELLE_SCHRITT = 'Baustellenmontage';
 function alleSchritte(){
+  const a = aktuellerAuftrag();
+  // Liegt für diesen Auftrag eine Kalkulation aus MöbelKalk vor (mit geplanten Fertigungsschritten),
+  // werden NUR diese angezeigt — nicht die generische Standardliste. Ohne Kalkulation (z.B. direkt in
+  // der App angelegte Aufträge) bleibt die Standardliste als sinnvolle Grundlage bestehen.
+  if(a?.sollProSchritt && Object.keys(a.sollProSchritt).length){
+    return Object.keys(a.sollProSchritt);
+  }
   const eigene = [...new Set(DB.zeiten.map(z=>z.schritt).filter(s=>s && !STANDARD_SCHRITTE.includes(s)))];
   return [...STANDARD_SCHRITTE, ...eigene];
 }
@@ -793,7 +800,8 @@ function renderZeitTab(){
   const laeuft = DB.stoppuhr && DB.stoppuhr.auftragId===a.id;
   const pausiert = laeuft && DB.stoppuhr.pausiert;
   if(laeuft) gewaehlterSchritt = DB.stoppuhr.schritt;
-  if(!gewaehlterSchritt) gewaehlterSchritt = STANDARD_SCHRITTE[0];
+  const verfuegbareSchritte = alleSchritte();
+  if(!gewaehlterSchritt || !verfuegbareSchritte.includes(gewaehlterSchritt)) gewaehlterSchritt = verfuegbareSchritte[0];
   const istBaustelle = gewaehlterSchritt === BAUSTELLE_SCHRITT;
   const eintraege = DB.zeiten.filter(z=>z.auftragId===a.id).sort((x,y)=>y.datum.localeCompare(x.datum));
   const gesamtMin = eintraege.reduce((s,z)=>s+(z.dauerMin||0),0);
@@ -808,7 +816,7 @@ function renderZeitTab(){
     <div class="card">
       <h2>Fertigungsschritt</h2>
       <div class="schritt-chips">
-        ${alleSchritte().map(s=>`<button class="chip ${s===gewaehlterSchritt?'active':''}" data-schritt="${escapeHtml(s)}" ${laeuft?'disabled':''}>${escapeHtml(s)}</button>`).join('')}
+        ${verfuegbareSchritte.map(s=>`<button class="chip ${s===gewaehlterSchritt?'active':''}" data-schritt="${escapeHtml(s)}" ${laeuft?'disabled':''}>${escapeHtml(s)}</button>`).join('')}
         <button class="chip chip-neu" id="schritt_neu_btn" ${laeuft?'disabled':''}>+ eigener</button>
       </div>
       <div class="schritt-chips" style="margin-top:8px">
