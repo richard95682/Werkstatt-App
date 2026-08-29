@@ -599,10 +599,16 @@ function bindAuftragAuswahlVollbild(){
         return;
       }
       const kunde = document.getElementById('na_kunde').value.trim();
-      const neu = {id:uid(), name, kunde};
+      const neu = {id:uid(), name, kunde, status:'Kalkulation'};
       DB.auftraege.push(neu);
       DB.aktiverAuftragId = neu.id;
       await speichereJetzt();
+      if(cloudVerbunden){
+        cloudPfad('auftraege').doc(neu.id).set({
+          name: neu.name, kunde: neu.kunde, status: neu.status, sollProSchritt: {}, materialien: [], beschlaege: [],
+          ausApp: true, aktualisiertAm: new Date().toISOString()
+        }).catch(err=>console.warn('Cloud-Anlegen (neuer Auftrag) fehlgeschlagen:', err));
+      }
       render();
     }catch(err){
       alert('Fehler beim Anlegen des Auftrags: ' + (err.message||err) + '\n\nBitte prüfe, ob die App über Safari geöffnet wurde (nicht in einer Vorschau) und nicht im privaten Modus läuft.');

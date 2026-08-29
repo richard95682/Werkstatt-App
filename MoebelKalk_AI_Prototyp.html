@@ -106,6 +106,7 @@ tr:last-child td{border-bottom:none;}
 .chip-angebot{background:#d9e3d3;color:#4d6244;}
 .chip-auftrag{background:#cfe0d8;color:#2f6249;}
 .chip-fertigung{background:#dccfe8;color:#5f3f8f;}
+.chip-fertig{background:#cfe8d3;color:#2f6b3a;}
 .chip-abgeschlossen{background:#232323;color:#fff;}
 
 .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;}
@@ -330,18 +331,23 @@ async function cloudNeuBerechneStundenFuerProjekt(projektId){
     let pos = nk.azIst.find(r=>r.name===schritt);
     if(!pos){ pos = {name:schritt, std:0, std2:0}; nk.azIst.push(pos); }
     const altSchatten = nk._cloudSchatten.az[schritt] || {std:0, std2:0};
-    const neuM1 = summeM1[schritt]||0, neuM2 = summeM2[schritt]||0;
+    // Auf volle Viertelstunden aufrunden — direkt bei der rohen Cloud-Summe, BEVOR sie für die Differenz
+    // verwendet wird. So bleibt der "Schatten" (letzter bekannter Cloud-Stand) selbst immer bereits gerundet,
+    // wodurch sich das Aufrunden bei wiederholten automatischen Abgleichen NICHT aufsummiert.
+    const neuM1 = Math.ceil((summeM1[schritt]||0)*4)/4, neuM2 = Math.ceil((summeM2[schritt]||0)*4)/4;
     pos.std = Math.round(((pos.std||0) + (neuM1 - altSchatten.std))*100)/100;
     pos.std2 = Math.round(((pos.std2||0) + (neuM2 - altSchatten.std2))*100)/100;
     nk._cloudSchatten.az[schritt] = {std:neuM1, std2:neuM2};
   });
-  nk.baustellenmontageIst = Math.round(((parseFloat(nk.baustellenmontageIst)||0) + (bmM1 - nk._cloudSchatten.bm.std))*100)/100;
-  nk.baustellenmontageIst2 = Math.round(((parseFloat(nk.baustellenmontageIst2)||0) + (bmM2 - nk._cloudSchatten.bm.std2))*100)/100;
+  const bmM1Gerundet = Math.ceil(bmM1*4)/4, bmM2Gerundet = Math.ceil(bmM2*4)/4;
+  const obM1Gerundet = Math.ceil(obM1*4)/4, obM2Gerundet = Math.ceil(obM2*4)/4;
+  nk.baustellenmontageIst = Math.round(((parseFloat(nk.baustellenmontageIst)||0) + (bmM1Gerundet - nk._cloudSchatten.bm.std))*100)/100;
+  nk.baustellenmontageIst2 = Math.round(((parseFloat(nk.baustellenmontageIst2)||0) + (bmM2Gerundet - nk._cloudSchatten.bm.std2))*100)/100;
   nk.baustellenmontageKmIst = Math.round((parseFloat(nk.baustellenmontageKmIst)||0) + (bmKm - nk._cloudSchatten.bm.km));
-  nk.oberflaecheIst = Math.round(((parseFloat(nk.oberflaecheIst)||0) + (obM1 - nk._cloudSchatten.ob.std))*100)/100;
-  nk.oberflaecheIst2 = Math.round(((parseFloat(nk.oberflaecheIst2)||0) + (obM2 - nk._cloudSchatten.ob.std2))*100)/100;
-  nk._cloudSchatten.bm = {std:bmM1, std2:bmM2, km:bmKm};
-  nk._cloudSchatten.ob = {std:obM1, std2:obM2};
+  nk.oberflaecheIst = Math.round(((parseFloat(nk.oberflaecheIst)||0) + (obM1Gerundet - nk._cloudSchatten.ob.std))*100)/100;
+  nk.oberflaecheIst2 = Math.round(((parseFloat(nk.oberflaecheIst2)||0) + (obM2Gerundet - nk._cloudSchatten.ob.std2))*100)/100;
+  nk._cloudSchatten.bm = {std:bmM1Gerundet, std2:bmM2Gerundet, km:bmKm};
+  nk._cloudSchatten.ob = {std:obM1Gerundet, std2:obM2Gerundet};
   await save('nachkalkulation');
   if(current==='nachkalkulation') renderMain();
 }
@@ -441,6 +447,20 @@ async function cloudDatenJetztAbrufen(erzwingen=false){
   const bereitsDa = new Set(DB.werkstattImportierteIds);
   let neu = 0, uebersprungen = 0;
   const projekteBetroffen = new Set();
+  // Aufträge übernehmen, die in der Werkstatt-App neu angelegt wurden und noch kein lokales Projekt haben
+  try{
+    const cloudAuftraegeSnap = await cloudPfad('auftraege').get();
+    const lokaleProjektIds = new Set(DB.projects.map(p=>p.id));
+    let ausAppUebernommen = 0;
+    for(const doc of cloudAuftraegeSnap.docs){
+      if(lokaleProjektIds.has(doc.id)) continue;
+      const cloudAuftrag = doc.data();
+      if(!cloudAuftrag.ausApp) continue; // nur Aufträge übernehmen, die tatsächlich aus der App stammen
+      DB.projects.push({id:doc.id, name:cloudAuftrag.name||'Unbenannt', kunde:cloudAuftrag.kunde||'', status:cloudAuftrag.status||'Kalkulation', datum:new Date().toISOString().slice(0,10), kalkulation:null});
+      ausAppUebernommen++;
+    }
+    if(ausAppUebernommen>0) await save('projects');
+  }catch(err){ console.warn('Übernahme neuer Aufträge aus der App fehlgeschlagen:', err); }
   for(const doc of zeitenSnap.docs){
     const z = {id:doc.id, ...doc.data()};
     if(bereitsDa.has(z.id)){ uebersprungen++; }
@@ -628,6 +648,7 @@ async function loadAll(){
   }
   await bereinigeBaustellenmontageOberflaecheStreuzeilen();
   await bereinigeBeschlaegeInZusatzpositionen();
+  await bereinigeStundenAufViertelstunden();
 }
 // Eigenständige Funktion, damit sie sowohl beim normalen Laden als auch nach einem "Zurücksichern"
 // (das den DB-Stand komplett überschreibt) aufgerufen werden kann.
@@ -672,6 +693,34 @@ async function bereinigeBeschlaegeInZusatzpositionen(){
       return false; // aus Zusatzpositionen entfernen, jetzt in Soll-vs-Ist
     });
     if(nk.zusatzpositionenExtra.length!==vorherAnzahl) geaendert = true;
+  });
+  if(geaendert) await save('nachkalkulation');
+}
+async function bereinigeStundenAufViertelstunden(){
+  // Rundet alle BEREITS gespeicherten Ist-Stunden (aus der Zeit vor Einführung des Aufrundens) nachträglich
+  // einmalig auf volle Viertelstunden auf — läuft danach nicht erneut, da die eigentliche Berechnung
+  // (cloudNeuBerechneStundenFuerProjekt) neue Werte ab jetzt bereits korrekt gerundet liefert.
+  let geaendert = false;
+  const aufrunden = n => { const v = parseFloat(n); return isFinite(v) ? Math.ceil(v*4)/4 : n; };
+  (DB.nachkalkulation||[]).forEach(nk=>{
+    (nk.azIst||[]).forEach(pos=>{
+      const neuStd = aufrunden(pos.std), neuStd2 = aufrunden(pos.std2);
+      if(neuStd!==pos.std){ pos.std = neuStd; geaendert = true; }
+      if(neuStd2!==pos.std2){ pos.std2 = neuStd2; geaendert = true; }
+    });
+    ['baustellenmontageIst','baustellenmontageIst2','oberflaecheIst','oberflaecheIst2'].forEach(feld=>{
+      if(nk[feld]===undefined || nk[feld]===null || nk[feld]==='') return;
+      const neu = aufrunden(nk[feld]);
+      if(neu!==parseFloat(nk[feld])){ nk[feld] = neu; geaendert = true; }
+    });
+    if(nk._cloudSchatten){
+      Object.keys(nk._cloudSchatten.az||{}).forEach(schritt=>{
+        const s = nk._cloudSchatten.az[schritt];
+        s.std = aufrunden(s.std); s.std2 = aufrunden(s.std2);
+      });
+      if(nk._cloudSchatten.bm){ nk._cloudSchatten.bm.std = aufrunden(nk._cloudSchatten.bm.std); nk._cloudSchatten.bm.std2 = aufrunden(nk._cloudSchatten.bm.std2); }
+      if(nk._cloudSchatten.ob){ nk._cloudSchatten.ob.std = aufrunden(nk._cloudSchatten.ob.std); nk._cloudSchatten.ob.std2 = aufrunden(nk._cloudSchatten.ob.std2); }
+    }
   });
   if(geaendert) await save('nachkalkulation');
 }
@@ -785,6 +834,7 @@ async function importSicherungAusDatei(file){
     for(const key of Object.keys(DEFAULTS)){ if(data[key]!==undefined){ DB[key]=data[key]; await save(key); } }
     await bereinigeBaustellenmontageOberflaecheStreuzeilen();
     await bereinigeBeschlaegeInZusatzpositionen();
+    await bereinigeStundenAufViertelstunden();
     await bereinigeVerwaisteCloudAuftraege();
     alert('Sicherung importiert.'); renderMain();
   }catch(err){ alert('Ungültige Datei.'); }
@@ -930,7 +980,7 @@ function goto(view){
 /* ---------------------------- HELPERS ---------------------------- */
 function fmtEUR(n){ return (n!==null && n!==undefined && isFinite(n)?n:0).toLocaleString('de-DE',{style:'currency',currency:'EUR'}); }
 function fmtM2(n){ return (n!==null && n!==undefined && isFinite(n)?n:0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' m²'; }
-function statusChip(s){ const map={Anfrage:'anfrage',Kalkulation:'kalkulation',Angebot:'angebot',Auftrag:'auftrag',Fertigung:'fertigung',abgeschlossen:'abgeschlossen'}; return `<span class="chip chip-${map[s]||'anfrage'}">${s}</span>`; }
+function statusChip(s){ const map={Anfrage:'anfrage',Kalkulation:'kalkulation',Angebot:'angebot',Auftrag:'auftrag',Fertigung:'fertigung',Fertig:'fertig',abgeschlossen:'abgeschlossen'}; return `<span class="chip chip-${map[s]||'anfrage'}">${s}</span>`; }
 function findMat(id){ return DB.materials.find(m=>m.id===id); }
 function proj(id){ return DB.projects.find(p=>p.id===id); }
 function gruppiereBeschlagMengen(qtyMap, nurGeplant=true, preisSnapshot=null){
@@ -1276,8 +1326,22 @@ function projekteSortiertNachZuletztBearbeitet(){
 function bindeProjektTabelle(el){
   el.querySelectorAll('[data-open-project]').forEach(b=>b.addEventListener('click',()=>{ activeProjectId=b.dataset.openProject; goto('kalkulation'); }));
   el.querySelectorAll('[data-edit-project]').forEach(b=>b.addEventListener('click',()=>openProjectForm(b.dataset.editProject)));
+  el.querySelectorAll('[data-status-projekt]').forEach(sel=>sel.addEventListener('change', async e=>{
+    const projId = e.target.dataset.statusProjekt;
+    const p = DB.projects.find(x=>x.id===projId);
+    if(!p) return;
+    p.status = e.target.value;
+    await save('projects');
+    if(p.status==='abgeschlossen' && cloudVerbunden){
+      cloudPfad('auftraege').doc(projId).delete().catch(err=>console.warn('Cloud-Löschen (abgeschlossenes Projekt) fehlgeschlagen:', err));
+    } else if(cloudVerbunden){
+      cloudSyncProjekt(p).catch(err=>console.warn('Cloud-Sync (Statusänderung) fehlgeschlagen:', err));
+    }
+    renderMain();
+  }));
 }
 function tableProjects(list){
+  const alleStatus = ['Kalkulation','Fertigung','Fertig','abgeschlossen'];
   return `<table><thead><tr><th>Kunde</th><th>Projekt</th><th>Datum</th><th>Status</th><th>VK</th><th>NK</th><th>Version</th><th></th></tr></thead><tbody>
     ${list.map(p=>{
       const geplant = projektGeplantGesamt(p);
@@ -1286,7 +1350,10 @@ function tableProjects(list){
       const hatNk = DB.nachkalkulation.some(x=>x.projId===p.id);
       return `<tr>
       <td>${p.kunde||'—'}</td><td><a class="linklike" data-open-project="${p.id}">${p.name}</a></td>
-      <td class="mono">${p.datum||'—'}</td><td>${statusChip(p.status)}</td>
+      <td class="mono">${p.datum||'—'}</td>
+      <td><select class="status-inline chip chip-${(({Anfrage:'anfrage',Kalkulation:'kalkulation',Angebot:'angebot',Auftrag:'auftrag',Fertigung:'fertigung',Fertig:'fertig',abgeschlossen:'abgeschlossen'})[p.status])||'anfrage'}" data-status-projekt="${p.id}" style="border:none;font:inherit;cursor:pointer;width:auto;min-width:110px">
+        ${alleStatus.map(s=>`<option value="${s}" ${p.status===s?'selected':''}>${s}</option>`).join('')}
+      </select></td>
       <td class="mono">${hatKalkulation?fmtEUR(geplant.kosten):'—'}</td>
       <td class="mono">${hatNk?fmtEUR(nkPreis):'—'}</td>
       <td class="mono">v${p.version||1}</td>
@@ -1299,7 +1366,7 @@ function emptyState(ico,title,text){ return `<div class="empty"><div class="ico"
 function renderProjekte(el){
   const byStatus = {};
   DB.projects.forEach(p=>byStatus[p.status]=(byStatus[p.status]||0)+1);
-  const statuses = ['Kalkulation','Fertigung','abgeschlossen'];
+  const statuses = ['Kalkulation','Fertigung','Fertig','abgeschlossen'];
   el.innerHTML = `
     <div class="pagehead"><div><h1>Projekte</h1><p>Kunden, Status und Kalkulationsversionen verwalten.</p></div>
       <div class="btn-row">
@@ -1566,7 +1633,7 @@ function openProjectForm(id){
       <div class="field"><label>Projektname</label><input id="f_name" value="${p?.name||''}"></div>
       <div class="field"><label>Datum</label><input type="date" id="f_datum" value="${p?.datum||new Date().toISOString().slice(0,10)}"></div>
 
-      <div class="field"><label>Status</label><select id="f_status">${['Kalkulation','Fertigung','abgeschlossen'].map(s=>`<option ${p?.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+      <div class="field"><label>Status</label><select id="f_status">${['Kalkulation','Fertigung','Fertig','abgeschlossen'].map(s=>`<option ${p?.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
       <div class="field"><label>Kalkulationsversion</label><input type="number" id="f_version" value="${p?.version||1}" min="1"></div>
     </div>
     <div class="btn-row">
@@ -4121,12 +4188,14 @@ function renderNachkalkulation(el){
             <span class="small mono" style="margin-left:auto">${geplant.azM1?.[row.name]!==undefined?`Soll: ${fmtStdMin(geplant.azM1[row.name])}`:''}</span>
             <input type="number" step="0.25" min="0" data-nkaz-std="${i}" value="${row.std||0}" style="width:75px">
             <span class="small">Std.</span>
+            <span class="small mono" data-nkaz-stdmin="${i}" style="opacity:.7;min-width:80px">= ${fmtStdMin(row.std||0)}</span>
             ${schatten?`<button class="btn btn-ghost btn-sm" data-nkaz-sync-std="${i}" title="Aktuellen App-Gesamtwert übernehmen (${fmtStdMin(schatten.std)})">🔄</button>`:''}
             <span style="flex-basis:100%"></span>
             <span class="small" style="width:110px;margin-left:24px">👷 ${DB.settings.mitarbeiter2Name}</span>
             <span class="small mono" style="margin-left:auto">${geplant.azM2?.[row.name]!==undefined?`Soll: ${fmtStdMin(geplant.azM2[row.name])}`:''}</span>
             <input type="number" step="0.25" min="0" data-nkaz-std2="${i}" value="${row.std2||0}" style="width:75px">
             <span class="small">Std.</span>
+            <span class="small mono" data-nkaz-stdmin2="${i}" style="opacity:.7;min-width:80px">= ${fmtStdMin(row.std2||0)}</span>
             ${schatten?`<button class="btn btn-ghost btn-sm" data-nkaz-sync-std2="${i}" title="Aktuellen App-Gesamtwert übernehmen (${fmtStdMin(schatten.std2)})">🔄</button>`:''}
           </div>`;}).join('')}
       </div>
@@ -4138,12 +4207,14 @@ function renderNachkalkulation(el){
         <span class="small mono" style="margin-left:auto">Soll: ${fmtStdMin(geplant.oberflaecheStdM1)}</span>
         <input type="number" step="0.25" min="0" id="nk_ob" value="${nk.oberflaecheIst}" style="width:75px">
         <span class="small">Std.</span>
+        <span class="small mono" id="nk_ob_stdmin" style="opacity:.7;min-width:80px">= ${fmtStdMin(nk.oberflaecheIst)}</span>
         ${nk._cloudSchatten?`<button class="btn btn-ghost btn-sm" id="nk_ob_sync" title="Aktuellen App-Gesamtwert übernehmen (${fmtStdMin(nk._cloudSchatten.ob.std)})">🔄</button>`:''}
         <span style="flex-basis:100%"></span>
         <span class="small" style="width:110px;margin-left:24px">👷 ${DB.settings.mitarbeiter2Name}</span>
         <span class="small mono" style="margin-left:auto">Soll: ${fmtStdMin(geplant.oberflaecheStdM2)}</span>
         <input type="number" step="0.25" min="0" id="nk_ob2" value="${nk.oberflaecheIst2}" style="width:75px">
         <span class="small">Std.</span>
+        <span class="small mono" id="nk_ob2_stdmin" style="opacity:.7;min-width:80px">= ${fmtStdMin(nk.oberflaecheIst2)}</span>
         ${nk._cloudSchatten?`<button class="btn btn-ghost btn-sm" id="nk_ob2_sync" title="Aktuellen App-Gesamtwert übernehmen (${fmtStdMin(nk._cloudSchatten.ob.std2)})">🔄</button>`:''}
       </div>
       <div class="checkline" style="flex-wrap:wrap;row-gap:4px">
@@ -4154,12 +4225,14 @@ function renderNachkalkulation(el){
         <span class="small mono" style="margin-left:auto">Soll: ${fmtStdMin(geplant.baustellenmontageStdM1)}</span>
         <input type="number" step="0.25" min="0" id="nk_bm" value="${nk.baustellenmontageIst}" style="width:75px">
         <span class="small">Std.</span>
+        <span class="small mono" id="nk_bm_stdmin" style="opacity:.7;min-width:80px">= ${fmtStdMin(nk.baustellenmontageIst)}</span>
         ${nk._cloudSchatten?`<button class="btn btn-ghost btn-sm" id="nk_bm_sync" title="Aktuellen App-Gesamtwert übernehmen (${fmtStdMin(nk._cloudSchatten.bm.std)})">🔄</button>`:''}
         <span style="flex-basis:100%"></span>
         <span class="small" style="width:110px;margin-left:24px">👷 ${DB.settings.mitarbeiter2Name}</span>
         <span class="small mono" style="margin-left:auto">Soll: ${fmtStdMin(geplant.baustellenmontageStdM2)}</span>
         <input type="number" step="0.25" min="0" id="nk_bm2" value="${nk.baustellenmontageIst2}" style="width:75px">
         <span class="small">Std.</span>
+        <span class="small mono" id="nk_bm2_stdmin" style="opacity:.7;min-width:80px">= ${fmtStdMin(nk.baustellenmontageIst2)}</span>
         ${nk._cloudSchatten?`<button class="btn btn-ghost btn-sm" id="nk_bm2_sync" title="Aktuellen App-Gesamtwert übernehmen (${fmtStdMin(nk._cloudSchatten.bm.std2)})">🔄</button>`:''}
         <span style="flex-basis:100%"></span>
         <span class="small" style="width:110px;margin-left:24px">🚐 Kilometerpauschale</span>
@@ -4576,11 +4649,46 @@ function renderNachkalkulation(el){
     }
   }
   window.__nkAutoSaveJetzt = nkAutoSaveJetzt;
-  el.addEventListener('input', ()=>{
+  const stdMinAnzeigeZuordnung = {
+    'nk_ob':'nk_ob_stdmin', 'nk_ob2':'nk_ob2_stdmin', 'nk_bm':'nk_bm_stdmin', 'nk_bm2':'nk_bm2_stdmin',
+  };
+  const istStundenFeld = t => t.dataset.nkazStd!==undefined || t.dataset.nkazStd2!==undefined || stdMinAnzeigeZuordnung[t.id]!==undefined;
+  el.addEventListener('input', e=>{
     if(window.__nkAutoSaveTimer) clearTimeout(window.__nkAutoSaveTimer);
     window.__nkAutoSaveTimer = setTimeout(nkAutoSaveJetzt, 700);
+    // Std./Min.-Live-Anzeige direkt bei jedem Tastendruck aktualisieren, unabhängig vom Autosave-Timer
+    if(e.target.dataset.nkazStd!==undefined){
+      const anzeige = el.querySelector(`[data-nkaz-stdmin="${e.target.dataset.nkazStd}"]`);
+      if(anzeige) anzeige.textContent = `= ${fmtStdMin(parseFloat(e.target.value)||0)}`;
+    } else if(e.target.dataset.nkazStd2!==undefined){
+      const anzeige = el.querySelector(`[data-nkaz-stdmin2="${e.target.dataset.nkazStd2}"]`);
+      if(anzeige) anzeige.textContent = `= ${fmtStdMin(parseFloat(e.target.value)||0)}`;
+    } else if(stdMinAnzeigeZuordnung[e.target.id]){
+      const anzeige = document.getElementById(stdMinAnzeigeZuordnung[e.target.id]);
+      if(anzeige) anzeige.textContent = `= ${fmtStdMin(parseFloat(e.target.value)||0)}`;
+    }
   });
   el.addEventListener('change', e=>{
+    // Stunden-Eingaben werden beim Verlassen des Feldes automatisch auf die nächste volle
+    // Viertelstunde AUFgerundet (nie abgerundet) — z.B. 3.1 → 3.25, 3.26 → 3.5.
+    if(istStundenFeld(e.target)){
+      const wert = parseFloat(e.target.value)||0;
+      const aufgerundet = Math.ceil(wert*4)/4;
+      if(aufgerundet!==wert){
+        e.target.value = aufgerundet;
+        e.target.dispatchEvent(new Event('input', {bubbles:false})); // nur die Live-Anzeige aktualisieren, kein zweites bubbling nötig
+        if(e.target.dataset.nkazStd!==undefined){
+          const anzeige = el.querySelector(`[data-nkaz-stdmin="${e.target.dataset.nkazStd}"]`);
+          if(anzeige) anzeige.textContent = `= ${fmtStdMin(aufgerundet)}`;
+        } else if(e.target.dataset.nkazStd2!==undefined){
+          const anzeige = el.querySelector(`[data-nkaz-stdmin2="${e.target.dataset.nkazStd2}"]`);
+          if(anzeige) anzeige.textContent = `= ${fmtStdMin(aufgerundet)}`;
+        } else if(stdMinAnzeigeZuordnung[e.target.id]){
+          const anzeige = document.getElementById(stdMinAnzeigeZuordnung[e.target.id]);
+          if(anzeige) anzeige.textContent = `= ${fmtStdMin(aufgerundet)}`;
+        }
+      }
+    }
     // Sobald ein Feld verlassen wird (nicht bei jedem Tastendruck): komplett neu berechnen,
     // damit die Auswertungs-Karte (Gesamtpreis VK/NK) immer den aktuellen Stand zeigt.
     // Wichtig: nur ausführen, wenn dieser (u.U. veraltete) Listener noch zum aktuell angezeigten Projekt gehört.
@@ -4659,7 +4767,7 @@ function renderNachkalkulation(el){
     const alleInputs = [...stdInputs, obInput, ob2Input, bmInput, bm2Input];
     const werte = alleInputs.map(i=>parseFloat(i.value)||0);
     const neu = verteileViertelstunden(werte, neuerGesamt);
-    alleInputs.forEach((i,idx)=>{ i.value = neu[idx]; });
+    alleInputs.forEach((i,idx)=>{ i.value = neu[idx]; aktualisiereStdMinAnzeige(i); });
   });
   el.querySelector('#nk_gesamt_direkt')?.addEventListener('input',e=>{
     nkSpeichernImHintergrund();
