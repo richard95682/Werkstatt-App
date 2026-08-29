@@ -550,6 +550,11 @@ function renderAuftragAuswahlVollbild(){
         <input id="na_name" placeholder="z. B. Einbauschrank Riedler">
         <label>Kunde (optional)</label>
         <input id="na_kunde" placeholder="z. B. Familie Riedler">
+        <label>Status</label>
+        <select id="na_status">
+          <option value="Fertigung" selected>Fertigung (direkt loslegen)</option>
+          <option value="Kalkulation">Kalkulation (nur anlegen, noch nicht aktiv)</option>
+        </select>
         <button class="btn primary full" id="na_anlegen">+ Auftrag anlegen</button>
       </div>
       <div class="card">
@@ -599,7 +604,8 @@ function bindAuftragAuswahlVollbild(){
         return;
       }
       const kunde = document.getElementById('na_kunde').value.trim();
-      const neu = {id:uid(), name, kunde, status:'Kalkulation'};
+      const status = document.getElementById('na_status').value;
+      const neu = {id:uid(), name, kunde, status};
       DB.auftraege.push(neu);
       DB.aktiverAuftragId = neu.id;
       await speichereJetzt();
