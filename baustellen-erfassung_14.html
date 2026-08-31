@@ -1386,6 +1386,7 @@ function renderExportTab(){
     ${cloudVerbunden ? `<div class="hint ok" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <span>☁️ Cloud-Sync aktiv — Stunden und Material werden automatisch übertragen, Aufträge automatisch aktuell gehalten. Fotos weiterhin über den Export unten.</span>
       <button class="btn btn-ghost btn-sm" id="btnCloudNachholen" style="margin-left:auto">🔄 Alle Daten nachsenden</button>
+      <button class="btn btn-ghost btn-sm" id="btnCloudWiederherstellen">☁️⬇️ Stunden/Material aus Cloud laden</button>
     </div>` : `<div class="hint warn" style="margin-bottom:12px">⚠️ Cloud-Sync gerade nicht verbunden — Stunden/Material bleiben lokal gespeichert und werden automatisch nachgesendet, sobald wieder Internet da ist.</div>`}
     <div class="card">
       <h2>Übersicht — alle Aufträge</h2>
@@ -1450,6 +1451,26 @@ function bindExportTab(){
     cloudNachholSyncLief = false; // erzwingt erneutes Durchlaufen, auch wenn schon beim Start gelaufen
     await cloudNachholSync();
     zeigeToast(`✅ ${DB.zeiten.length} Zeiten + ${DB.material.length} Material an die Cloud gesendet`);
+    btn.textContent = alterText; btn.disabled = false;
+  });
+  document.getElementById('btnCloudWiederherstellen')?.addEventListener('click', async e=>{
+    const btn = e.currentTarget;
+    const alterText = btn.textContent;
+    if(!confirm('Alle Stunden und Material aus der Cloud in diese App laden? Das ersetzt den aktuellen lokalen Stand (z. B. wenn der App-Speicher geleert wurde oder das Icon neu installiert wurde).')) return;
+    btn.textContent = '⏳ lädt …'; btn.disabled = true;
+    try{
+      const [zeitenSnap, materialSnap, auftraegeSnap] = await Promise.all([
+        cloudPfad('zeiten').get(), cloudPfad('material').get(), cloudPfad('auftraege').get()
+      ]);
+      DB.zeiten = zeitenSnap.docs.map(d=>({id:d.id, ...d.data()}));
+      DB.material = materialSnap.docs.map(d=>({id:d.id, ...d.data()}));
+      DB.auftraege = auftraegeSnap.docs.map(d=>({id:d.id, ...d.data()}));
+      await speichereJetzt();
+      zeigeToast(`✅ ${DB.zeiten.length} Zeiten + ${DB.material.length} Material + ${DB.auftraege.length} Aufträge aus der Cloud geladen`);
+      render();
+    }catch(err){
+      zeigeToast('⚠️ Laden fehlgeschlagen: ' + (err.message||err));
+    }
     btn.textContent = alterText; btn.disabled = false;
   });
   document.getElementById('export_btn').addEventListener('click', async ()=>{
