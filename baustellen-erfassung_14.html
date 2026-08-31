@@ -422,6 +422,10 @@ function fmtUhrzeit(ms){
   const s = String(totalSek%60).padStart(2,'0');
   return `${h}:${m}:${s}`;
 }
+function fmtUhrzeitHHMM(zeitstempelMs){
+  const d = new Date(zeitstempelMs);
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
 function aktuellerAuftrag(){ return DB.auftraege.find(a=>a.id===DB.aktiverAuftragId) || null; }
 function zeigeToast(text){
   const t = document.createElement('div');
@@ -868,7 +872,7 @@ function renderZeitTab(){
         const gruppen = {};
         eintraege.forEach(z=>{
           const key = z.datum+'|'+z.schritt;
-          if(!gruppen[key]) gruppen[key] = {datum:z.datum, schritt:z.schritt, dauerMin:0, km:0, mitarbeiterSet:new Set(), notizen:[], ids:[]};
+          if(!gruppen[key]) gruppen[key] = {datum:z.datum, schritt:z.schritt, dauerMin:0, km:0, mitarbeiterSet:new Set(), notizen:[], ids:[], startZeit:z.startZeit, endZeit:z.endZeit};
           gruppen[key].dauerMin += (z.dauerMin||0);
           gruppen[key].km += (z.km||0);
           gruppen[key].mitarbeiterSet.add(z.mitarbeiter);
@@ -885,13 +889,24 @@ function renderZeitTab(){
           letztesDatum = g.datum;
           const monatKurz = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'][parseInt(g.datum.slice(5,7),10)-1];
           const tagNr = parseInt(g.datum.slice(8,10),10);
+          // Start-/Endzeit nur änderbar, wenn die Gruppe genau EINEN Einzeleintrag darstellt (bei mehreren
+          // zusammengefassten Einträgen wäre eine einzelne Start-/Endzeit nicht eindeutig).
+          const zeitenEditierbar = g.ids.length===1 && g.startZeit && g.endZeit;
           return `${tagWechsel ? `<div class="checkline" style="border-top:1px dashed var(--line);padding-top:8px;margin-top:8px"><b class="small">${fmtDatum(g.datum)}</b><span class="small" style="margin-left:auto;opacity:.75">Tagesgesamt: ${fmtDauer(tagesgesamt[g.datum])}</span></div>` : ''}
           <div class="listitem">
             <div class="icon" style="flex-direction:column;line-height:1;padding:2px 0">
               <span style="font-size:8px;font-weight:700;color:var(--danger,#c0504d);text-transform:uppercase">${monatKurz}</span>
               <span style="font-size:15px;font-weight:800">${tagNr}</span>
             </div>
-            <div class="main"><div class="title">${escapeHtml(g.schritt)} · ${fmtDauer(g.dauerMin)}${g.km?` · ${g.km} km`:''}</div><div class="meta">${[...g.mitarbeiterSet].map(escapeHtml).join(', ')}${g.notizen.length?' · '+g.notizen.map(escapeHtml).join('; '):''}${g.ids.length>1?` · ${g.ids.length} Einträge`:''}</div></div>
+            <div class="main">
+              <div class="title">${escapeHtml(g.schritt)} · ${fmtDauer(g.dauerMin)}${g.km?` · ${g.km} km`:''}</div>
+              <div class="meta">${[...g.mitarbeiterSet].map(escapeHtml).join(', ')}${g.notizen.length?' · '+g.notizen.map(escapeHtml).join('; '):''}${g.ids.length>1?` · ${g.ids.length} Einträge`:''}</div>
+              ${zeitenEditierbar ? `<div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+                <input type="time" value="${g.startZeit}" data-zeit-start="${g.ids[0]}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
+                <span class="small">–</span>
+                <input type="time" value="${g.endZeit}" data-zeit-end="${g.ids[0]}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
+              </div>` : ''}
+            </div>
             <div class="del" data-del-zeitgruppe="${g.ids.join(',')}">✕</div>
           </div>`;}).join('') : `<div class="empty">Noch keine Zeit erfasst.</div>`;
       })()}
@@ -919,7 +934,9 @@ function bindZeitTab(){
           const kmEingabe = await eingabeDialog({titel:'Kilometer erfassen', label:'Fahrtstrecke (km)', wert:'0', typ:'number', okText:'Speichern'});
           km = parseFloat(kmEingabe)||0;
         }
-        await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:DB.stoppuhr.schritt, dauerMin:Math.round(dauerMin*4)/4, km, notiz:'', quelle:'stoppuhr'});
+        const startUhrzeit = fmtUhrzeitHHMM(DB.stoppuhr.startZeit);
+        const endUhrzeit = fmtUhrzeitHHMM(Date.now());
+        await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:DB.stoppuhr.schritt, dauerMin:Math.round(dauerMin*4)/4, km, notiz:'', quelle:'stoppuhr', startZeit:startUhrzeit, endZeit:endUhrzeit});
       }
       DB.stoppuhr = null;
       if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
@@ -978,6 +995,26 @@ function bindZeitTab(){
     }
     await speichereJetzt(); render();
   }));
+  const aktualisiereZeitAusUhrzeiten = async (id) => {
+    const z = DB.zeiten.find(x=>x.id===id);
+    if(!z) return;
+    const startFeld = document.querySelector(`[data-zeit-start="${id}"]`);
+    const endFeld = document.querySelector(`[data-zeit-end="${id}"]`);
+    if(!startFeld?.value || !endFeld?.value) return;
+    const [startH, startM] = startFeld.value.split(':').map(Number);
+    const [endH, endM] = endFeld.value.split(':').map(Number);
+    let dauerMin = (endH*60+endM) - (startH*60+startM);
+    if(dauerMin<0) dauerMin += 24*60; // über Mitternacht hinweg (selten, aber möglich)
+    z.startZeit = startFeld.value; z.endZeit = endFeld.value; z.dauerMin = dauerMin;
+    await speichereJetzt();
+    if(cloudVerbunden){
+      try{ await cloudPfad('zeiten').doc(id).set(z); }
+      catch(err){ console.warn('Cloud-Update (Zeit-Uhrzeiten) fehlgeschlagen:', err); }
+    }
+    render();
+  };
+  document.querySelectorAll('[data-zeit-start]').forEach(inp=>inp.addEventListener('change', ()=>aktualisiereZeitAusUhrzeiten(inp.dataset.zeitStart)));
+  document.querySelectorAll('[data-zeit-end]').forEach(inp=>inp.addEventListener('change', ()=>aktualisiereZeitAusUhrzeiten(inp.dataset.zeitEnd)));
 }
 function starteStoppuhrAnzeige(){
   if(stoppuhrIntervall) clearInterval(stoppuhrIntervall);
