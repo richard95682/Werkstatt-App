@@ -790,6 +790,7 @@ function bindTabInhalt(){
 
 /* ============================= TAB: ZEIT ============================= */
 let gewaehlterSchritt = null; // aktuell im UI ausgewählter Fertigungsschritt (nicht gespeichert, nur UI-Status)
+let aufgeklappteZeitgruppen = new Set(); // welche Tag+Tätigkeit-Gruppen gerade aufgeklappt sind, um Einzeleinträge zu bearbeiten
 
 function stoppuhrElapsedMs(){
   if(!DB.stoppuhr) return 0;
@@ -872,12 +873,13 @@ function renderZeitTab(){
         const gruppen = {};
         eintraege.forEach(z=>{
           const key = z.datum+'|'+z.schritt;
-          if(!gruppen[key]) gruppen[key] = {datum:z.datum, schritt:z.schritt, dauerMin:0, km:0, mitarbeiterSet:new Set(), notizen:[], ids:[], startZeit:z.startZeit, endZeit:z.endZeit};
+          if(!gruppen[key]) gruppen[key] = {datum:z.datum, schritt:z.schritt, dauerMin:0, km:0, mitarbeiterSet:new Set(), notizen:[], ids:[], einzelEintraege:[], startZeit:z.startZeit, endZeit:z.endZeit};
           gruppen[key].dauerMin += (z.dauerMin||0);
           gruppen[key].km += (z.km||0);
           gruppen[key].mitarbeiterSet.add(z.mitarbeiter);
           if(z.notiz) gruppen[key].notizen.push(z.notiz);
           gruppen[key].ids.push(z.id);
+          gruppen[key].einzelEintraege.push(z);
         });
         const gruppenListe = Object.values(gruppen).sort((x,y)=>y.datum.localeCompare(x.datum));
         // Tagesgesamt je Datum berechnen, um es zusätzlich als eigene Zeile pro Tag einzufügen
@@ -889,27 +891,42 @@ function renderZeitTab(){
           letztesDatum = g.datum;
           const monatKurz = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'][parseInt(g.datum.slice(5,7),10)-1];
           const tagNr = parseInt(g.datum.slice(8,10),10);
-          // Start-/Endzeit bei jedem Einzeleintrag anzeigen (auch nachträglich eintragbar, falls noch nicht
-          // gespeichert) — bei mehreren zusammengefassten Einträgen wäre eine einzelne Zeit nicht eindeutig.
-          const zeitenEditierbar = g.ids.length===1;
+          const gruppenSchluessel = g.datum+'|'+g.schritt;
+          const istAufgeklappt = aufgeklappteZeitgruppen.has(gruppenSchluessel);
+          // Bei GENAU einem Eintrag: Uhrzeit direkt anzeigen. Bei mehreren zusammengefassten Einträgen:
+          // aufklappbar machen, damit jeder Einzeleintrag mit seiner eigenen Uhrzeit bearbeitet werden kann.
+          const zeitenDirektEditierbar = g.ids.length===1;
           return `${tagWechsel ? `<div class="checkline" style="border-top:1px dashed var(--line);padding-top:8px;margin-top:8px"><b class="small">${fmtDatum(g.datum)}</b><span class="small" style="margin-left:auto;opacity:.75">Tagesgesamt: ${fmtDauer(tagesgesamt[g.datum])}</span></div>` : ''}
-          <div class="listitem">
+          <div class="listitem" ${g.ids.length>1?`data-toggle-zeitgruppe="${escapeHtml(gruppenSchluessel)}" style="cursor:pointer"`:''}>
             <div class="icon" style="flex-direction:column;line-height:1;padding:2px 0">
               <span style="font-size:8px;font-weight:700;color:var(--danger,#c0504d);text-transform:uppercase">${monatKurz}</span>
               <span style="font-size:15px;font-weight:800">${tagNr}</span>
             </div>
             <div class="main">
               <div class="title">${escapeHtml(g.schritt)} · ${fmtDauer(g.dauerMin)}${g.km?` · ${g.km} km`:''}</div>
-              <div class="meta">${[...g.mitarbeiterSet].map(escapeHtml).join(', ')}${g.notizen.length?' · '+g.notizen.map(escapeHtml).join('; '):''}${g.ids.length>1?` · ${g.ids.length} Einträge`:''}</div>
-              ${zeitenEditierbar ? `<div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+              <div class="meta">${[...g.mitarbeiterSet].map(escapeHtml).join(', ')}${g.notizen.length?' · '+g.notizen.map(escapeHtml).join('; '):''}${g.ids.length>1?` · ${g.ids.length} Einträge ${istAufgeklappt?'▲ einklappen':'▼ antippen zum Bearbeiten'}`:''}</div>
+              ${zeitenDirektEditierbar ? `<div style="display:flex;align-items:center;gap:6px;margin-top:4px">
                 <input type="time" value="${g.startZeit||''}" data-zeit-start="${g.ids[0]}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
                 <span class="small">–</span>
                 <input type="time" value="${g.endZeit||''}" data-zeit-end="${g.ids[0]}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
                 ${!g.startZeit ? `<span class="small" style="opacity:.6">← Uhrzeit eintragen</span>` : ''}
               </div>` : ''}
             </div>
-            <div class="del" data-del-zeitgruppe="${g.ids.join(',')}">✕</div>
-          </div>`;}).join('') : `<div class="empty">Noch keine Zeit erfasst.</div>`;
+            ${g.ids.length===1 ? `<div class="del" data-del-zeitgruppe="${g.ids.join(',')}">✕</div>` : `<div class="del" data-del-zeitgruppe="${g.ids.join(',')}" title="Ganzen Tag/Tätigkeit löschen">✕</div>`}
+          </div>
+          ${(g.ids.length>1 && istAufgeklappt) ? g.einzelEintraege.map(z=>`
+            <div class="listitem" style="padding-left:44px;background:var(--card-2);border-radius:8px;margin:2px 0">
+              <div class="main">
+                <div class="meta">${escapeHtml(z.mitarbeiter)}${z.notiz?' · '+escapeHtml(z.notiz):''} · ${fmtDauer(z.dauerMin)}</div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+                  <input type="time" value="${z.startZeit||''}" data-zeit-start="${z.id}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
+                  <span class="small">–</span>
+                  <input type="time" value="${z.endZeit||''}" data-zeit-end="${z.id}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
+                  ${!z.startZeit ? `<span class="small" style="opacity:.6">← Uhrzeit eintragen</span>` : ''}
+                </div>
+              </div>
+              <div class="del" data-del-zeitgruppe="${z.id}">✕</div>
+            </div>`).join('') : ''}`;}).join('') : `<div class="empty">Noch keine Zeit erfasst.</div>`;
       })()}
     </div>`;
 }
@@ -1016,6 +1033,13 @@ function bindZeitTab(){
   };
   document.querySelectorAll('[data-zeit-start]').forEach(inp=>inp.addEventListener('change', ()=>aktualisiereZeitAusUhrzeiten(inp.dataset.zeitStart)));
   document.querySelectorAll('[data-zeit-end]').forEach(inp=>inp.addEventListener('change', ()=>aktualisiereZeitAusUhrzeiten(inp.dataset.zeitEnd)));
+  document.querySelectorAll('[data-toggle-zeitgruppe]').forEach(el=>el.addEventListener('click', e=>{
+    if(e.target.closest('input, .del')) return; // Klicks in die Uhrzeit-Felder oder den Löschen-Button sollen nicht auf-/zuklappen
+    const key = el.dataset.toggleZeitgruppe;
+    if(aufgeklappteZeitgruppen.has(key)) aufgeklappteZeitgruppen.delete(key);
+    else aufgeklappteZeitgruppen.add(key);
+    render();
+  }));
 }
 function starteStoppuhrAnzeige(){
   if(stoppuhrIntervall) clearInterval(stoppuhrIntervall);
