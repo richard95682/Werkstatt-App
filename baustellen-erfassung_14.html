@@ -1474,11 +1474,11 @@ function bindExportTab(){
   document.getElementById('btnCloudWiederherstellen')?.addEventListener('click', async e=>{
     const btn = e.currentTarget;
     const alterText = btn.textContent;
-    if(!confirm('Fehlende Stunden/Material/Aufträge aus der Cloud nachladen? Bereits lokal vorhandene Einträge (auch noch nicht synchronisierte) bleiben dabei erhalten — es werden nur fehlende ergänzt, nichts wird überschrieben oder gelöscht.')) return;
+    if(!confirm('Fehlende Stunden/Material/Aufträge/Kantenmaterial aus der Cloud nachladen? Bereits lokal vorhandene Einträge (auch noch nicht synchronisierte) bleiben dabei erhalten — es werden nur fehlende ergänzt, nichts wird überschrieben oder gelöscht.')) return;
     btn.textContent = '⏳ lädt …'; btn.disabled = true;
     try{
-      const [zeitenSnap, materialSnap, auftraegeSnap] = await Promise.all([
-        cloudPfad('zeiten').get(), cloudPfad('material').get(), cloudPfad('auftraege').get()
+      const [zeitenSnap, materialSnap, auftraegeSnap, kantenIstSnap] = await Promise.all([
+        cloudPfad('zeiten').get(), cloudPfad('material').get(), cloudPfad('auftraege').get(), cloudPfad('kantenIst').get()
       ]);
       // Zusammenführen statt ersetzen: lokale Einträge (auch noch nicht in die Cloud synchronisierte, z.B.
       // gerade offline erfasste) bleiben in jedem Fall erhalten — aus der Cloud werden nur die ERGÄNZT,
@@ -1492,8 +1492,17 @@ function bindExportTab(){
       DB.zeiten = zusammenfuehren(DB.zeiten, zeitenSnap.docs);
       DB.material = zusammenfuehren(DB.material, materialSnap.docs);
       DB.auftraege = zusammenfuehren(DB.auftraege, auftraegeSnap.docs);
+      if(!DB.kantenIst) DB.kantenIst = {};
+      let kantenErgaenzt = 0;
+      kantenIstSnap.docs.forEach(doc=>{
+        if(DB.kantenIst[doc.id] === undefined){ // nur ergänzen, wenn lokal für diesen Auftrag noch GAR NICHTS hinterlegt ist
+          const daten = doc.data();
+          DB.kantenIst[doc.id] = {lfm:daten.lfm||0, puVerleimung:!!daten.puVerleimung};
+          kantenErgaenzt++;
+        }
+      });
       await speichereJetzt();
-      zeigeToast(`✅ ${DB.zeiten.length-zeitenVorher} Zeiten + ${DB.material.length-materialVorher} Material + ${DB.auftraege.length-auftraegeVorher} Aufträge ergänzt`);
+      zeigeToast(`✅ ${DB.zeiten.length-zeitenVorher} Zeiten + ${DB.material.length-materialVorher} Material + ${DB.auftraege.length-auftraegeVorher} Aufträge + ${kantenErgaenzt} Kantenmaterial ergänzt`);
       render();
     }catch(err){
       zeigeToast('⚠️ Laden fehlgeschlagen: ' + (err.message||err));
