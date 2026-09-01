@@ -257,6 +257,10 @@ async function cloudNachholSync(){
   try{
     for(const z of DB.zeiten){ await cloudPfad('zeiten').doc(z.id).set(z); }
     for(const m of DB.material){ await cloudPfad('material').doc(m.id).set(m); }
+    for(const f of DB.fotos){
+      const cloudDataUrl = await verkleinereBildFuerCloud(f.dataUrl);
+      await cloudPfad('fotos').doc(f.id).set({auftragId:f.auftragId, mitarbeiter:f.mitarbeiter, datum:f.datum, dataUrl:cloudDataUrl, notiz:f.notiz||'', aktualisiertAm:new Date().toISOString()});
+    }
     for(const [auftragId, daten] of Object.entries(DB.kantenIst||{})){
       await cloudPfad('kantenIst').doc(auftragId).set({auftragId, ...daten, aktualisiertAm:new Date().toISOString()});
     }
@@ -1273,15 +1277,45 @@ function bindFotosTab(){
     const file = e.target.files[0];
     if(!file) return;
     const dataUrl = await verkleinereBild(file);
-    DB.fotos.push({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), dataUrl, notiz:''});
+    const id = uid();
+    DB.fotos.push({id, auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), dataUrl, notiz:''});
     await speichereJetzt();
     render();
     zeigeToast('Foto gespeichert ✓');
+    if(cloudVerbunden){
+      try{
+        // Für die Cloud-Übertragung stärker komprimieren (Firestore-Dokumente dürfen max. 1 MB groß sein) —
+        // die lokale, etwas hochwertigere Version bleibt davon unberührt.
+        const cloudDataUrl = await verkleinereBildFuerCloud(dataUrl);
+        await cloudPfad('fotos').doc(id).set({auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), dataUrl:cloudDataUrl, notiz:'', aktualisiertAm:new Date().toISOString()});
+      }catch(err){ console.warn('Cloud-Sync (Foto) fehlgeschlagen:', err); }
+    }
   });
   document.querySelectorAll('[data-del-foto]').forEach(b=>b.addEventListener('click', async ()=>{
-    DB.fotos = DB.fotos.filter(f=>f.id!==b.dataset.delFoto);
+    const id = b.dataset.delFoto;
+    DB.fotos = DB.fotos.filter(f=>f.id!==id);
     await speichereJetzt(); render();
+    if(cloudVerbunden){
+      try{ await cloudPfad('fotos').doc(id).delete(); }
+      catch(err){ console.warn('Cloud-Löschen (Foto) fehlgeschlagen:', err); }
+    }
   }));
+}
+function verkleinereBildFuerCloud(dataUrl){
+  return new Promise(resolve=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxSeite = 700;
+      let {width, height} = img;
+      if(width>height && width>maxSeite){ height = height*maxSeite/width; width = maxSeite; }
+      else if(height>maxSeite){ width = width*maxSeite/height; height = maxSeite; }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', 0.45));
+    };
+    img.src = dataUrl;
+  });
 }
 function verkleinereBild(file){
   return new Promise(resolve=>{
@@ -1421,7 +1455,7 @@ function renderExportTab(){
   const gesamtStd = (DB.zeiten.reduce((s,z)=>s+(z.dauerMin||0),0)/60).toFixed(1);
   return `
     ${cloudVerbunden ? `<div class="hint ok" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span>☁️ Cloud-Sync aktiv — Stunden und Material werden automatisch übertragen, Aufträge automatisch aktuell gehalten. Fotos weiterhin über den Export unten.</span>
+      <span>☁️ Cloud-Sync aktiv — Stunden, Material und Fotos werden automatisch übertragen, Aufträge automatisch aktuell gehalten.</span>
       <button class="btn btn-ghost btn-sm" id="btnCloudNachholen" style="margin-left:auto">🔄 Alle Daten nachsenden</button>
       <button class="btn btn-ghost btn-sm" id="btnCloudWiederherstellen">☁️⬇️ Stunden/Material aus Cloud laden</button>
     </div>` : `<div class="hint warn" style="margin-bottom:12px">⚠️ Cloud-Sync gerade nicht verbunden — Stunden/Material bleiben lokal gespeichert und werden automatisch nachgesendet, sobald wieder Internet da ist.</div>`}
@@ -1496,8 +1530,8 @@ function bindExportTab(){
     if(!confirm('Fehlende Stunden/Material/Aufträge/Kantenmaterial aus der Cloud nachladen? Bereits lokal vorhandene Einträge (auch noch nicht synchronisierte) bleiben dabei erhalten — es werden nur fehlende ergänzt, nichts wird überschrieben oder gelöscht.')) return;
     btn.textContent = '⏳ lädt …'; btn.disabled = true;
     try{
-      const [zeitenSnap, materialSnap, auftraegeSnap, kantenIstSnap] = await Promise.all([
-        cloudPfad('zeiten').get(), cloudPfad('material').get(), cloudPfad('auftraege').get(), cloudPfad('kantenIst').get()
+      const [zeitenSnap, materialSnap, auftraegeSnap, kantenIstSnap, fotosSnap] = await Promise.all([
+        cloudPfad('zeiten').get(), cloudPfad('material').get(), cloudPfad('auftraege').get(), cloudPfad('kantenIst').get(), cloudPfad('fotos').get()
       ]);
       // Zusammenführen statt ersetzen: lokale Einträge (auch noch nicht in die Cloud synchronisierte, z.B.
       // gerade offline erfasste) bleiben in jedem Fall erhalten — aus der Cloud werden nur die ERGÄNZT,
@@ -1507,10 +1541,11 @@ function bindExportTab(){
         const ergaenzung = cloudDocs.filter(d=>!lokaleIds.has(d.id)).map(d=>({id:d.id, ...d.data()}));
         return [...lokal, ...ergaenzung];
       };
-      const zeitenVorher = DB.zeiten.length, materialVorher = DB.material.length, auftraegeVorher = DB.auftraege.length;
+      const zeitenVorher = DB.zeiten.length, materialVorher = DB.material.length, auftraegeVorher = DB.auftraege.length, fotosVorher = DB.fotos.length;
       DB.zeiten = zusammenfuehren(DB.zeiten, zeitenSnap.docs);
       DB.material = zusammenfuehren(DB.material, materialSnap.docs);
       DB.auftraege = zusammenfuehren(DB.auftraege, auftraegeSnap.docs);
+      DB.fotos = zusammenfuehren(DB.fotos, fotosSnap.docs);
       if(!DB.kantenIst) DB.kantenIst = {};
       let kantenErgaenzt = 0;
       kantenIstSnap.docs.forEach(doc=>{
@@ -1526,7 +1561,7 @@ function bindExportTab(){
         }
       });
       await speichereJetzt();
-      zeigeToast(`✅ ${DB.zeiten.length-zeitenVorher} Zeiten + ${DB.material.length-materialVorher} Material + ${DB.auftraege.length-auftraegeVorher} Aufträge + ${kantenErgaenzt} Kantenmaterial ergänzt`);
+      zeigeToast(`✅ ${DB.zeiten.length-zeitenVorher} Zeiten + ${DB.material.length-materialVorher} Material + ${DB.auftraege.length-auftraegeVorher} Aufträge + ${kantenErgaenzt} Kantenmaterial + ${DB.fotos.length-fotosVorher} Fotos ergänzt`);
       render();
     }catch(err){
       zeigeToast('⚠️ Laden fehlgeschlagen: ' + (err.message||err));
