@@ -353,7 +353,17 @@ function alleSchritte(){
   const a = aktuellerAuftrag();
   // Grundliste: Bei vorhandener Kalkulation aus MöbelKalk die dort geplanten Fertigungsschritte,
   // sonst die generische Standardliste (z.B. bei direkt in der App angelegten Aufträgen).
-  const grundliste = (a?.sollProSchritt && Object.keys(a.sollProSchritt).length) ? Object.keys(a.sollProSchritt) : STANDARD_SCHRITTE;
+  // In derselben Reihenfolge wie in der VK sortiert (AV, Zuschnitt, Kanten, Zusammenbau, CNC-Bearbeitung, …),
+  // statt der zufälligen Objekt-Schlüssel-Reihenfolge aus sollProSchritt zu folgen.
+  const kanonischeReihenfolge = [...STANDARD_SCHRITTE, 'Oberfläche'];
+  const nachVkSortiert = liste => [...liste].sort((x,y)=>{
+    const ix = kanonischeReihenfolge.indexOf(x), iy = kanonischeReihenfolge.indexOf(y);
+    if(ix===-1 && iy===-1) return 0; // beide unbekannt: Reihenfolge beibehalten
+    if(ix===-1) return 1; // unbekannte Schritte ans Ende
+    if(iy===-1) return -1;
+    return ix-iy;
+  });
+  const grundliste = (a?.sollProSchritt && Object.keys(a.sollProSchritt).length) ? nachVkSortiert(Object.keys(a.sollProSchritt)) : STANDARD_SCHRITTE;
   // Eigene, für DIESEN Auftrag manuell verwendete Sonder-Schritte bleiben zusätzlich bestehen — nur
   // Schritte von einem GANZ ANDEREN Auftrag werden nicht mit übernommen.
   const eigene = [...new Set(DB.zeiten.filter(z=>z.auftragId===a?.id).map(z=>z.schritt).filter(s=>s && !grundliste.includes(s)))];
