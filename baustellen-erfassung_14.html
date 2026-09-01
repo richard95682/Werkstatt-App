@@ -800,6 +800,7 @@ function bindTabInhalt(){
 
 /* ============================= TAB: ZEIT ============================= */
 let gewaehlterSchritt = null; // aktuell im UI ausgewählter Fertigungsschritt (nicht gespeichert, nur UI-Status)
+let gewaehlterSchrittAuftragId = null; // zu welchem Auftrag die obige Auswahl gehört — verhindert, dass sie beim Auftragswechsel fälschlich "mitwandert"
 let aufgeklappteZeitgruppen = new Set(); // welche Tag+Tätigkeit-Gruppen gerade aufgeklappt sind, um Einzeleinträge zu bearbeiten
 
 function stoppuhrElapsedMs(){
@@ -814,8 +815,15 @@ function renderZeitTab(){
   const laeuft = DB.stoppuhr && DB.stoppuhr.auftragId===a.id;
   const pausiert = laeuft && DB.stoppuhr.pausiert;
   if(laeuft) gewaehlterSchritt = DB.stoppuhr.schritt;
-  const verfuegbareSchritte = alleSchritte();
-  if(!gewaehlterSchritt || !verfuegbareSchritte.includes(gewaehlterSchritt)) gewaehlterSchritt = verfuegbareSchritte[0];
+  // Eine bestehende Auswahl gilt nur, wenn sie tatsächlich zu DIESEM Auftrag gehört — sonst würde sie beim
+  // Wechsel zu einem anderen Auftrag fälschlich "mitwandern" und dort einen falschen Schritt anzeigen.
+  if(gewaehlterSchrittAuftragId !== a.id) gewaehlterSchritt = null;
+  let verfuegbareSchritte = alleSchritte();
+  // Ein gerade eben über "+ eigener" neu angelegter Schritt hat noch KEINEN Zeit-Eintrag und würde sonst
+  // hier fälschlich wieder verworfen werden — deshalb die aktuelle Auswahl (für DIESEN Auftrag) mit aufnehmen.
+  if(gewaehlterSchritt && !verfuegbareSchritte.includes(gewaehlterSchritt)) verfuegbareSchritte = [...verfuegbareSchritte, gewaehlterSchritt];
+  if(!gewaehlterSchritt) gewaehlterSchritt = verfuegbareSchritte[0];
+  gewaehlterSchrittAuftragId = a.id;
   const istBaustelle = gewaehlterSchritt === BAUSTELLE_SCHRITT;
   const eintraege = DB.zeiten.filter(z=>z.auftragId===a.id).sort((x,y)=>y.datum.localeCompare(x.datum));
   const gesamtMin = eintraege.reduce((s,z)=>s+(z.dauerMin||0),0);
