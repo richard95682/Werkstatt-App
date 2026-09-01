@@ -246,25 +246,31 @@ async function neueMaterialErfassung(eintrag){
 }
 let cloudNachholSyncLief = false;
 async function cloudNachholSync(){
-  // Sendet ALLE lokal vorhandenen Zeiten/Material einmalig nach — wichtig für Einträge, die entstanden sind,
-  // bevor die Cloud-Anbindung überhaupt existierte (die kamen beim ursprünglichen Erfassen ja nie in die Cloud).
-  // .set() ist idempotent (überschreibt anhand der ID), mehrfaches Ausführen ist unbedenklich, keine Duplikate.
-  // WICHTIG: Löscht absichtlich NICHTS in der Cloud — das würde bei leerem lokalen Speicher (z.B. neues Gerät,
-  // App-Reset) sonst versehentlich ALLE Cloud-Daten löschen. Einzelne Löschungen laufen bereits sicher über
-  // die jeweiligen ✕-Buttons direkt beim Löschen.
-  if(!cloudVerbunden || cloudNachholSyncLief) return;
+  // Sendet ALLE lokal vorhandenen Zeiten/Material/Fotos einmalig nach — wichtig für Einträge, die entstanden
+  // sind, bevor die Cloud-Anbindung überhaupt existierte (die kamen beim ursprünglichen Erfassen ja nie in
+  // die Cloud). .set() ist idempotent (überschreibt anhand der ID), mehrfaches Ausführen ist unbedenklich,
+  // keine Duplikate. WICHTIG: Löscht absichtlich NICHTS in der Cloud — das würde bei leerem lokalen Speicher
+  // (z.B. neues Gerät, App-Reset) sonst versehentlich ALLE Cloud-Daten löschen. Einzelne Löschungen laufen
+  // bereits sicher über die jeweiligen ✕-Buttons direkt beim Löschen.
+  if(!cloudVerbunden || cloudNachholSyncLief) return {fotosGesendet:0, fotosFehlgeschlagen:0};
   cloudNachholSyncLief = true;
+  let fotosGesendet = 0, fotosFehlgeschlagen = 0;
   try{
     for(const z of DB.zeiten){ await cloudPfad('zeiten').doc(z.id).set(z); }
     for(const m of DB.material){ await cloudPfad('material').doc(m.id).set(m); }
+    // Jedes Foto einzeln absichern: ein fehlerhaftes/zu großes Foto soll nicht alle nachfolgenden blockieren.
     for(const f of DB.fotos){
-      const cloudDataUrl = await verkleinereBildFuerCloud(f.dataUrl);
-      await cloudPfad('fotos').doc(f.id).set({auftragId:f.auftragId, mitarbeiter:f.mitarbeiter, datum:f.datum, dataUrl:cloudDataUrl, notiz:f.notiz||'', aktualisiertAm:new Date().toISOString()});
+      try{
+        const cloudDataUrl = await verkleinereBildFuerCloud(f.dataUrl);
+        await cloudPfad('fotos').doc(f.id).set({auftragId:f.auftragId, mitarbeiter:f.mitarbeiter, datum:f.datum, dataUrl:cloudDataUrl, notiz:f.notiz||'', aktualisiertAm:new Date().toISOString()});
+        fotosGesendet++;
+      }catch(fotoErr){ fotosFehlgeschlagen++; console.warn('Foto-Sync fehlgeschlagen für', f.id, fotoErr); }
     }
     for(const [auftragId, daten] of Object.entries(DB.kantenIst||{})){
       await cloudPfad('kantenIst').doc(auftragId).set({auftragId, ...daten, aktualisiertAm:new Date().toISOString()});
     }
   }catch(err){ console.warn('Cloud-Nachhol-Sync fehlgeschlagen:', err); }
+  return {fotosGesendet, fotosFehlgeschlagen};
 }
 let cloudAuftraegeListenerAktiv = false;
 function cloudAuftraegeListenerStarten(){
@@ -1520,8 +1526,8 @@ function bindExportTab(){
     const alterText = btn.textContent;
     btn.textContent = '⏳ sendet …'; btn.disabled = true;
     cloudNachholSyncLief = false; // erzwingt erneutes Durchlaufen, auch wenn schon beim Start gelaufen
-    await cloudNachholSync();
-    zeigeToast(`✅ ${DB.zeiten.length} Zeiten + ${DB.material.length} Material an die Cloud gesendet`);
+    const {fotosGesendet, fotosFehlgeschlagen} = await cloudNachholSync();
+    zeigeToast(`✅ ${DB.zeiten.length} Zeiten + ${DB.material.length} Material + ${fotosGesendet} Foto(s) gesendet${fotosFehlgeschlagen>0?` (⚠️ ${fotosFehlgeschlagen} Foto(s) fehlgeschlagen)`:''}`);
     btn.textContent = alterText; btn.disabled = false;
   });
   document.getElementById('btnCloudWiederherstellen')?.addEventListener('click', async e=>{
