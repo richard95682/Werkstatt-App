@@ -1495,8 +1495,13 @@ function bindExportTab(){
       if(!DB.kantenIst) DB.kantenIst = {};
       let kantenErgaenzt = 0;
       kantenIstSnap.docs.forEach(doc=>{
-        if(DB.kantenIst[doc.id] === undefined){ // nur ergänzen, wenn lokal für diesen Auftrag noch GAR NICHTS hinterlegt ist
-          const daten = doc.data();
+        const daten = doc.data();
+        const lokal = DB.kantenIst[doc.id];
+        // Ergänzen, wenn lokal für diesen Auftrag noch gar nichts hinterlegt ist ODER der lokale Stand wie ein
+        // unberührter Platzhalter aussieht (0 lfm, kein PU-Verleimung) — ein echter, tatsächlicher Wert bleibt
+        // in jedem Fall unangetastet.
+        const lokalWirktUnberuehrt = !lokal || (!lokal.lfm && !lokal.puVerleimung);
+        if(lokalWirktUnberuehrt && (daten.lfm || daten.puVerleimung)){
           DB.kantenIst[doc.id] = {lfm:daten.lfm||0, puVerleimung:!!daten.puVerleimung};
           kantenErgaenzt++;
         }
