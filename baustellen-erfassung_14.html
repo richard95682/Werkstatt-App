@@ -560,6 +560,7 @@ function renderAuftragAuswahlVollbild(){
         ${gefiltert.map(a=>`<div class="listitem" data-waehle-auftrag="${a.id}" style="cursor:pointer">
           <div class="icon">📁</div>
           <div class="main"><div class="title">${escapeHtml(a.name)}</div>${a.kunde?`<div class="meta">${escapeHtml(a.kunde)}</div>`:''}</div>
+          <div class="listitem-del" data-bearbeite-auftrag="${a.id}" style="color:var(--text-dim2);font-size:16px;padding:4px 6px;cursor:pointer">✎</div>
           <div class="listitem-del del" data-loesche-auftrag="${a.id}">✕</div>
         </div>`).join('')}
       </div>`;
@@ -595,9 +596,27 @@ function bindAuftragAuswahlVollbild(){
     await speichereJetzt(); render();
   });
   document.querySelectorAll('[data-waehle-auftrag]').forEach(el=>el.addEventListener('click', async e=>{
-    if(e.target.closest('[data-loesche-auftrag]')) return;
+    if(e.target.closest('[data-loesche-auftrag]') || e.target.closest('[data-bearbeite-auftrag]')) return;
     DB.aktiverAuftragId = el.dataset.waehleAuftrag;
     await speichereJetzt();
+    render();
+  }));
+  document.querySelectorAll('[data-bearbeite-auftrag]').forEach(el=>el.addEventListener('click', async e=>{
+    e.stopPropagation();
+    const id = el.dataset.bearbeiteAuftrag;
+    const a = DB.auftraege.find(x=>x.id===id);
+    if(!a) return;
+    const neuerName = await eingabeDialog({titel:'Auftragsbezeichnung ändern', label:'Bezeichnung', wert:a.name, okText:'Speichern'});
+    if(neuerName===null) return; // abgebrochen
+    const neuerKunde = await eingabeDialog({titel:'Kunde ändern', label:'Kunde (optional)', wert:a.kunde||'', okText:'Speichern'});
+    if(neuerKunde===null) return; // abgebrochen
+    a.name = neuerName.trim() || a.name;
+    a.kunde = neuerKunde.trim();
+    await speichereJetzt();
+    if(cloudVerbunden){
+      cloudPfad('auftraege').doc(id).set({name:a.name, kunde:a.kunde, status:a.status||'Kalkulation', sollProSchritt:a.sollProSchritt||{}, materialien:a.materialien||[], beschlaege:a.beschlaege||[], ausApp:true, aktualisiertAm:new Date().toISOString()}, {merge:true})
+        .catch(err=>console.warn('Cloud-Update (Auftrag umbenennen) fehlgeschlagen:', err));
+    }
     render();
   }));
   document.querySelectorAll('[data-loesche-auftrag]').forEach(el=>el.addEventListener('click', async e=>{
