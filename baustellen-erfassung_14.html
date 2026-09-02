@@ -1308,18 +1308,33 @@ function bindFotosTab(){
   }));
 }
 function verkleinereBildFuerCloud(dataUrl){
-  return new Promise(resolve=>{
+  // Probiert nacheinander höhere Auflösung/Qualität durch und nimmt die beste Stufe, die noch sicher unter
+  // dem Firestore-Dokumentenlimit (1 MB) bleibt — bessere Bildqualität, da die Cloud-Kopie sowieso nur
+  // kurz existiert (wird direkt nach der Übernahme durch MöbelKalk wieder gelöscht).
+  return new Promise((resolve, reject)=>{
     const img = new Image();
     img.onload = ()=>{
-      const maxSeite = 700;
-      let {width, height} = img;
-      if(width>height && width>maxSeite){ height = height*maxSeite/width; width = maxSeite; }
-      else if(height>maxSeite){ width = width*maxSeite/height; height = maxSeite; }
-      const canvas = document.createElement('canvas');
-      canvas.width = width; canvas.height = height;
-      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', 0.45));
+      const stufen = [
+        {maxSeite:1100, qualitaet:0.75},
+        {maxSeite:1000, qualitaet:0.65},
+        {maxSeite:850, qualitaet:0.55},
+        {maxSeite:700, qualitaet:0.45},
+        {maxSeite:500, qualitaet:0.35},
+      ];
+      const sicheresLimitZeichen = 850000; // deutlich unter der 1-MB-Grenze (~1.048.576 Byte), inkl. Sicherheitsabstand
+      for(const stufe of stufen){
+        let {width, height} = img;
+        if(width>height && width>stufe.maxSeite){ height = height*stufe.maxSeite/width; width = stufe.maxSeite; }
+        else if(height>stufe.maxSeite){ width = width*stufe.maxSeite/height; height = stufe.maxSeite; }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        const ergebnis = canvas.toDataURL('image/jpeg', stufe.qualitaet);
+        if(ergebnis.length <= sicheresLimitZeichen){ resolve(ergebnis); return; }
+      }
+      reject(new Error('Foto zu groß/detailreich, passt auch stark komprimiert nicht unter das Cloud-Limit'));
     };
+    img.onerror = () => reject(new Error('Bild konnte nicht geladen werden'));
     img.src = dataUrl;
   });
 }
