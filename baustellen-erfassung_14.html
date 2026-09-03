@@ -991,28 +991,40 @@ function bindZeitTab(){
   });
 
   document.getElementById('stoppuhr_btn').addEventListener('click', async ()=>{
-    if(DB.stoppuhr && DB.stoppuhr.auftragId===a.id){
-      const dauerMin = stoppuhrElapsedMs()/60000;
-      if(dauerMin>=0.5){
-        let km = 0;
-        if(DB.stoppuhr.schritt===BAUSTELLE_SCHRITT){
-          const kmEingabe = await eingabeDialog({titel:'Kilometer erfassen', label:'Fahrtstrecke (km)', wert:'0', typ:'number', okText:'Speichern'});
-          km = parseFloat(kmEingabe)||0;
+    if(window.__stoppuhrVerarbeitungLaeuft) return; // verhindert doppelte Einträge bei mehrfachem, schnellem Antippen
+    window.__stoppuhrVerarbeitungLaeuft = true;
+    try{
+      if(DB.stoppuhr && DB.stoppuhr.auftragId===a.id){
+        const dauerMin = stoppuhrElapsedMs()/60000;
+        if(dauerMin>=0.5){
+          let km = 0;
+          if(DB.stoppuhr.schritt===BAUSTELLE_SCHRITT){
+            const kmEingabe = await eingabeDialog({titel:'Kilometer erfassen', label:'Fahrtstrecke (km)', wert:'0', typ:'number', okText:'Speichern'});
+            km = parseFloat(kmEingabe)||0;
+          }
+          const startUhrzeit = fmtUhrzeitHHMM(DB.stoppuhr.startZeit);
+          const endUhrzeit = fmtUhrzeitHHMM(Date.now());
+          const schrittZumSpeichern = DB.stoppuhr.schritt;
+          DB.stoppuhr = null; // SOFORT zurücksetzen, bevor await-Aufrufe folgen — sonst könnte ein zweiter, fast
+          // gleichzeitiger Klick denselben (noch nicht zurückgesetzten) Zustand nochmal verarbeiten und den
+          // Eintrag doppelt anlegen.
+          if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
+          await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:schrittZumSpeichern, dauerMin:Math.round(dauerMin*4)/4, km, notiz:'', quelle:'stoppuhr', startZeit:startUhrzeit, endZeit:endUhrzeit});
+        } else {
+          DB.stoppuhr = null;
+          if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
         }
-        const startUhrzeit = fmtUhrzeitHHMM(DB.stoppuhr.startZeit);
-        const endUhrzeit = fmtUhrzeitHHMM(Date.now());
-        await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:DB.stoppuhr.schritt, dauerMin:Math.round(dauerMin*4)/4, km, notiz:'', quelle:'stoppuhr', startZeit:startUhrzeit, endZeit:endUhrzeit});
+        await speichereJetzt();
+        render();
+        zeigeToast('Zeit gespeichert ✓');
+      } else {
+        DB.stoppuhr = {startZeit:Date.now(), auftragId:a.id, schritt:gewaehlterSchritt, pausiert:false, angesammelteMs:0};
+        await speichereJetzt();
+        render();
+        starteStoppuhrAnzeige();
       }
-      DB.stoppuhr = null;
-      if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
-      await speichereJetzt();
-      render();
-      zeigeToast('Zeit gespeichert ✓');
-    } else {
-      DB.stoppuhr = {startZeit:Date.now(), auftragId:a.id, schritt:gewaehlterSchritt, pausiert:false, angesammelteMs:0};
-      await speichereJetzt();
-      render();
-      starteStoppuhrAnzeige();
+    } finally {
+      window.__stoppuhrVerarbeitungLaeuft = false;
     }
   });
   document.getElementById('stoppuhr_pause_btn')?.addEventListener('click', async ()=>{
@@ -1034,16 +1046,22 @@ function bindZeitTab(){
   if(DB.stoppuhr && DB.stoppuhr.auftragId===a.id && !DB.stoppuhr.pausiert) starteStoppuhrAnzeige();
 
   document.getElementById('man_add').addEventListener('click', async ()=>{
-    const std = parseFloat(document.getElementById('man_std').value);
-    if(!std || std<=0) return;
-    const datum = document.getElementById('man_datum').value || heute();
-    const notiz = document.getElementById('man_notiz').value.trim();
-    const kmFeld = document.getElementById('man_km');
-    const km = kmFeld ? (parseFloat(kmFeld.value)||0) : 0;
-    await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum, schritt:gewaehlterSchritt, dauerMin:std*60, km, notiz, quelle:'manuell'});
-    await speichereJetzt();
-    render();
-    zeigeToast('Eingetragen ✓');
+    if(window.__manEintragLaeuft) return; // verhindert doppelte Einträge bei mehrfachem, schnellem Antippen
+    window.__manEintragLaeuft = true;
+    try{
+      const std = parseFloat(document.getElementById('man_std').value);
+      if(!std || std<=0) return;
+      const datum = document.getElementById('man_datum').value || heute();
+      const notiz = document.getElementById('man_notiz').value.trim();
+      const kmFeld = document.getElementById('man_km');
+      const km = kmFeld ? (parseFloat(kmFeld.value)||0) : 0;
+      await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum, schritt:gewaehlterSchritt, dauerMin:std*60, km, notiz, quelle:'manuell'});
+      await speichereJetzt();
+      render();
+      zeigeToast('Eingetragen ✓');
+    } finally {
+      window.__manEintragLaeuft = false;
+    }
   });
   document.querySelectorAll('[data-del-zeitgruppe]').forEach(b=>b.addEventListener('click', async ()=>{
     const ids = b.dataset.delZeitgruppe.split(',');
