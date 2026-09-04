@@ -1002,6 +1002,8 @@ function bindZeitTab(){
             const kmEingabe = await eingabeDialog({titel:'Kilometer erfassen', label:'Fahrtstrecke (km)', wert:'0', typ:'number', okText:'Speichern'});
             km = parseFloat(kmEingabe)||0;
           }
+          const notizEingabe = await eingabeDialog({titel:'Notiz (optional)', label:'z. B. Besonderheiten, Grund für längere Dauer …', wert:'', typ:'text', okText:'Speichern', abbrechenText:'Ohne Notiz'});
+          const notiz = (notizEingabe||'').trim();
           const startUhrzeit = fmtUhrzeitHHMM(DB.stoppuhr.startZeit);
           const endUhrzeit = fmtUhrzeitHHMM(Date.now());
           const schrittZumSpeichern = DB.stoppuhr.schritt;
@@ -1009,7 +1011,7 @@ function bindZeitTab(){
           // gleichzeitiger Klick denselben (noch nicht zurückgesetzten) Zustand nochmal verarbeiten und den
           // Eintrag doppelt anlegen.
           if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
-          await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:schrittZumSpeichern, dauerMin:Math.round(dauerMin*4)/4, km, notiz:'', quelle:'stoppuhr', startZeit:startUhrzeit, endZeit:endUhrzeit});
+          await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:schrittZumSpeichern, dauerMin:Math.round(dauerMin*4)/4, km, notiz, quelle:'stoppuhr', startZeit:startUhrzeit, endZeit:endUhrzeit});
         } else {
           DB.stoppuhr = null;
           if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
