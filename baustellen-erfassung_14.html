@@ -951,26 +951,28 @@ function renderZeitTab(){
             </div>
             <div class="main">
               <div class="title">${escapeHtml(g.schritt)} · ${fmtDauer(g.dauerMin)}${g.km?` · ${g.km} km`:''}</div>
-              <div class="meta">${[...g.mitarbeiterSet].map(escapeHtml).join(', ')}${g.notizen.length?' · '+g.notizen.map(escapeHtml).join('; '):''}${g.ids.length>1?` · ${g.ids.length} Einträge ${istAufgeklappt?'▲ einklappen':'▼ antippen zum Bearbeiten'}`:''}</div>
+              <div class="meta">${[...g.mitarbeiterSet].map(escapeHtml).join(', ')}${(g.ids.length>1 && g.notizen.length)?' · '+g.notizen.map(escapeHtml).join('; '):''}${g.ids.length>1?` · ${g.ids.length} Einträge ${istAufgeklappt?'▲ einklappen':'▼ antippen zum Bearbeiten'}`:''}</div>
               ${zeitenDirektEditierbar ? `<div style="display:flex;align-items:center;gap:6px;margin-top:4px">
                 <input type="time" value="${g.startZeit||''}" data-zeit-start="${g.ids[0]}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
                 <span class="small">–</span>
                 <input type="time" value="${g.endZeit||''}" data-zeit-end="${g.ids[0]}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
                 ${!g.startZeit ? `<span class="small" style="opacity:.6">← Uhrzeit eintragen</span>` : ''}
-              </div>` : ''}
+              </div>
+              <input type="text" value="${escapeHtml(g.notizen[0]||'')}" data-zeit-notiz="${g.ids[0]}" placeholder="Notiz hinzufügen (optional)" style="margin:6px 0 0 0;padding:8px 10px;font-size:13px">` : ''}
             </div>
             ${g.ids.length===1 ? `<div class="del" data-del-zeitgruppe="${g.ids.join(',')}">✕</div>` : `<div class="del" data-del-zeitgruppe="${g.ids.join(',')}" title="Ganzen Tag/Tätigkeit löschen">✕</div>`}
           </div>
           ${(g.ids.length>1 && istAufgeklappt) ? g.einzelEintraege.map(z=>`
             <div class="listitem" style="padding-left:44px;background:var(--card-2);border-radius:8px;margin:2px 0">
               <div class="main">
-                <div class="meta">${escapeHtml(z.mitarbeiter)}${z.notiz?' · '+escapeHtml(z.notiz):''} · ${fmtDauer(z.dauerMin)}</div>
+                <div class="meta">${escapeHtml(z.mitarbeiter)} · ${fmtDauer(z.dauerMin)}</div>
                 <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
                   <input type="time" value="${z.startZeit||''}" data-zeit-start="${z.id}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
                   <span class="small">–</span>
                   <input type="time" value="${z.endZeit||''}" data-zeit-end="${z.id}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
                   ${!z.startZeit ? `<span class="small" style="opacity:.6">← Uhrzeit eintragen</span>` : ''}
                 </div>
+                <input type="text" value="${escapeHtml(z.notiz||'')}" data-zeit-notiz="${z.id}" placeholder="Notiz hinzufügen (optional)" style="margin:6px 0 0 0;padding:8px 10px;font-size:13px">
               </div>
               <div class="del" data-del-zeitgruppe="${z.id}">✕</div>
             </div>`).join('') : ''}`;}).join('') : `<div class="empty">Noch keine Zeit erfasst.</div>`;
@@ -1002,8 +1004,7 @@ function bindZeitTab(){
             const kmEingabe = await eingabeDialog({titel:'Kilometer erfassen', label:'Fahrtstrecke (km)', wert:'0', typ:'number', okText:'Speichern'});
             km = parseFloat(kmEingabe)||0;
           }
-          const notizEingabe = await eingabeDialog({titel:'Notiz (optional)', label:'z. B. Besonderheiten, Grund für längere Dauer …', wert:'', typ:'text', okText:'Speichern', abbrechenText:'Ohne Notiz'});
-          const notiz = (notizEingabe||'').trim();
+          const notiz = '';
           const startUhrzeit = fmtUhrzeitHHMM(DB.stoppuhr.startZeit);
           const endUhrzeit = fmtUhrzeitHHMM(Date.now());
           const schrittZumSpeichern = DB.stoppuhr.schritt;
@@ -1100,6 +1101,18 @@ function bindZeitTab(){
   };
   document.querySelectorAll('[data-zeit-start]').forEach(inp=>inp.addEventListener('change', ()=>aktualisiereZeitAusUhrzeiten(inp.dataset.zeitStart)));
   document.querySelectorAll('[data-zeit-end]').forEach(inp=>inp.addEventListener('change', ()=>aktualisiereZeitAusUhrzeiten(inp.dataset.zeitEnd)));
+  document.querySelectorAll('[data-zeit-notiz]').forEach(inp=>inp.addEventListener('change', async e=>{
+    const id = e.target.dataset.zeitNotiz;
+    const z = DB.zeiten.find(x=>x.id===id);
+    if(!z) return;
+    z.notiz = e.target.value.trim();
+    await speichereJetzt();
+    if(cloudVerbunden){
+      try{ await cloudPfad('zeiten').doc(id).set(z); }
+      catch(err){ console.warn('Cloud-Update (Zeit-Notiz) fehlgeschlagen:', err); }
+    }
+    render();
+  }));
   document.querySelectorAll('[data-toggle-zeitgruppe]').forEach(el=>el.addEventListener('click', e=>{
     if(e.target.closest('input, .del')) return; // Klicks in die Uhrzeit-Felder oder den Löschen-Button sollen nicht auf-/zuklappen
     const key = el.dataset.toggleZeitgruppe;
