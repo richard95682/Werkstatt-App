@@ -61,6 +61,12 @@
     padding:16px; margin-bottom:14px;
   }
   .card h2{font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-dim2); margin-bottom:12px;}
+  .card-kompakt{padding:12px;}
+  .card-kompakt h2{font-size:12px; margin-bottom:8px;}
+  .card-kompakt label{font-size:10.5px; margin-bottom:3px;}
+  .card-kompakt input{padding:9px 10px; font-size:14px; margin-bottom:8px;}
+  .card-kompakt .field-row{gap:8px;}
+  .card-kompakt .btn{padding:10px 14px; font-size:13.5px;}
 
   /* Stoppuhr */
   .stoppuhr{text-align:center; padding:10px 0 4px;}
@@ -895,7 +901,7 @@ function renderZeitTab(){
       </div>` : `
       <button class="big-btn start" id="stoppuhr_btn">▶ Starten</button>`}
     </div>
-    <div class="card">
+    <div class="card card-kompakt">
       <h2>Manuell eintragen — ${escapeHtml(gewaehlterSchritt)}</h2>
       <div class="field-row">
         <div style="flex:0 0 100px"><label>Stunden</label><input id="man_std" type="number" min="0" step="0.25" inputmode="decimal" placeholder="0"></div>
