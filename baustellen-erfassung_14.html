@@ -898,7 +898,7 @@ function renderZeitTab(){
     <div class="card">
       <h2>Manuell eintragen — ${escapeHtml(gewaehlterSchritt)}</h2>
       <div class="field-row">
-        <div><label>Stunden</label><input id="man_std" type="number" min="0" step="0.25" inputmode="decimal" placeholder="0"></div>
+        <div style="flex:0 0 100px"><label>Stunden</label><input id="man_std" type="number" min="0" step="0.25" inputmode="decimal" placeholder="0"></div>
         <div><label>Datum</label><input id="man_datum" type="date" value="${heute()}"></div>
       </div>
       ${istBaustelle ? `<label>Kilometer (Fahrtstrecke)</label><input id="man_km" type="number" min="0" step="1" inputmode="numeric" placeholder="0">` : ''}
@@ -953,9 +953,9 @@ function renderZeitTab(){
               <div class="title">${escapeHtml(g.schritt)} · ${fmtDauer(g.dauerMin)}${g.km?` · ${g.km} km`:''}</div>
               <div class="meta">${[...g.mitarbeiterSet].map(escapeHtml).join(', ')}${(g.ids.length>1 && g.notizen.length)?' · '+g.notizen.map(escapeHtml).join('; '):''}${g.ids.length>1?` · ${g.ids.length} Einträge ${istAufgeklappt?'▲ einklappen':'▼ antippen zum Bearbeiten'}`:''}</div>
               ${zeitenDirektEditierbar ? `<div style="display:flex;align-items:center;gap:6px;margin-top:4px">
-                <input type="time" value="${g.startZeit||''}" data-zeit-start="${g.ids[0]}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
+                <button type="button" class="btn btn-ghost btn-sm" data-zeit-start-oeffnen="${g.ids[0]}" style="padding:5px 10px;font-size:13px">${g.startZeit||'Start'}</button>
                 <span class="small">–</span>
-                <input type="time" value="${g.endZeit||''}" data-zeit-end="${g.ids[0]}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
+                <button type="button" class="btn btn-ghost btn-sm" data-zeit-end-oeffnen="${g.ids[0]}" style="padding:5px 10px;font-size:13px">${g.endZeit||'Ende'}</button>
                 ${!g.startZeit ? `<span class="small" style="opacity:.6">← Uhrzeit eintragen</span>` : ''}
               </div>
               <input type="text" value="${escapeHtml(g.notizen[0]||'')}" data-zeit-notiz="${g.ids[0]}" placeholder="Notiz hinzufügen (optional)" style="margin:6px 0 0 0;padding:8px 10px;font-size:13px">` : ''}
@@ -967,9 +967,9 @@ function renderZeitTab(){
               <div class="main">
                 <div class="meta">${escapeHtml(z.mitarbeiter)} · ${fmtDauer(z.dauerMin)}</div>
                 <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
-                  <input type="time" value="${z.startZeit||''}" data-zeit-start="${z.id}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
+                  <button type="button" class="btn btn-ghost btn-sm" data-zeit-start-oeffnen="${z.id}" style="padding:5px 10px;font-size:13px">${z.startZeit||'Start'}</button>
                   <span class="small">–</span>
-                  <input type="time" value="${z.endZeit||''}" data-zeit-end="${z.id}" style="width:auto;margin:0;padding:5px 8px;font-size:13px">
+                  <button type="button" class="btn btn-ghost btn-sm" data-zeit-end-oeffnen="${z.id}" style="padding:5px 10px;font-size:13px">${z.endZeit||'Ende'}</button>
                   ${!z.startZeit ? `<span class="small" style="opacity:.6">← Uhrzeit eintragen</span>` : ''}
                 </div>
                 <input type="text" value="${escapeHtml(z.notiz||'')}" data-zeit-notiz="${z.id}" placeholder="Notiz hinzufügen (optional)" style="margin:6px 0 0 0;padding:8px 10px;font-size:13px">
@@ -1081,17 +1081,17 @@ function bindZeitTab(){
     }
     await speichereJetzt(); render();
   }));
-  const aktualisiereZeitAusUhrzeiten = async (id) => {
+  const aktualisiereZeitAusUhrzeiten = async (id, neueStart, neueEnd) => {
     const z = DB.zeiten.find(x=>x.id===id);
     if(!z) return;
-    const startFeld = document.querySelector(`[data-zeit-start="${id}"]`);
-    const endFeld = document.querySelector(`[data-zeit-end="${id}"]`);
-    if(!startFeld?.value || !endFeld?.value) return;
-    const [startH, startM] = startFeld.value.split(':').map(Number);
-    const [endH, endM] = endFeld.value.split(':').map(Number);
+    const startWert = neueStart!==undefined ? neueStart : z.startZeit;
+    const endWert = neueEnd!==undefined ? neueEnd : z.endZeit;
+    if(!startWert || !endWert) { z.startZeit = startWert; z.endZeit = endWert; await speichereJetzt(); render(); return; }
+    const [startH, startM] = startWert.split(':').map(Number);
+    const [endH, endM] = endWert.split(':').map(Number);
     let dauerMin = (endH*60+endM) - (startH*60+startM);
     if(dauerMin<0) dauerMin += 24*60; // über Mitternacht hinweg (selten, aber möglich)
-    z.startZeit = startFeld.value; z.endZeit = endFeld.value; z.dauerMin = dauerMin;
+    z.startZeit = startWert; z.endZeit = endWert; z.dauerMin = dauerMin;
     await speichereJetzt();
     if(cloudVerbunden){
       try{ await cloudPfad('zeiten').doc(id).set(z); }
@@ -1099,8 +1099,25 @@ function bindZeitTab(){
     }
     render();
   };
-  document.querySelectorAll('[data-zeit-start]').forEach(inp=>inp.addEventListener('change', ()=>aktualisiereZeitAusUhrzeiten(inp.dataset.zeitStart)));
-  document.querySelectorAll('[data-zeit-end]').forEach(inp=>inp.addEventListener('change', ()=>aktualisiereZeitAusUhrzeiten(inp.dataset.zeitEnd)));
+  document.querySelectorAll('[data-zeit-start-oeffnen]').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const id = btn.dataset.zeitStartOeffnen;
+    const z = DB.zeiten.find(x=>x.id===id);
+    if(!z) return;
+    // Eigenes Dialogfenster mit explizitem "Speichern"-Knopf statt des nativen Zeitrads direkt in der Liste —
+    // das native Rad schließt sich zwar (systembedingt) sofort beim Loslassen, aber übernommen wird der Wert
+    // trotzdem erst, wenn hier bewusst auf "Speichern" getippt wird.
+    const neuerWert = await eingabeDialog({titel:'Startzeit', label:'Uhrzeit', wert:z.startZeit||'', typ:'time', okText:'Speichern'});
+    if(neuerWert===null) return; // abgebrochen
+    await aktualisiereZeitAusUhrzeiten(id, neuerWert, undefined);
+  }));
+  document.querySelectorAll('[data-zeit-end-oeffnen]').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const id = btn.dataset.zeitEndOeffnen;
+    const z = DB.zeiten.find(x=>x.id===id);
+    if(!z) return;
+    const neuerWert = await eingabeDialog({titel:'Endzeit', label:'Uhrzeit', wert:z.endZeit||'', typ:'time', okText:'Speichern'});
+    if(neuerWert===null) return; // abgebrochen
+    await aktualisiereZeitAusUhrzeiten(id, undefined, neuerWert);
+  }));
   document.querySelectorAll('[data-zeit-notiz]').forEach(inp=>inp.addEventListener('change', async e=>{
     const id = e.target.dataset.zeitNotiz;
     const z = DB.zeiten.find(x=>x.id===id);
