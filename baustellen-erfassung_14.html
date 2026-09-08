@@ -1639,10 +1639,22 @@ function bindExportTab(){
     const btn = e.currentTarget;
     btn.textContent = '⏳ wird geladen …'; btn.disabled = true;
     await speichereJetzt(); // sicherstellen, dass noch nichts Ungespeichertes verloren geht
-    // Sicherheitsnetz: falls das Neuladen aus irgendeinem Grund nicht durchstartet, nach 4 Sekunden
-    // den Button wieder freigeben, statt dass er dauerhaft "hängen" bleibt.
-    setTimeout(()=>{ btn.textContent = '🔄 Nach Updates suchen'; btn.disabled = false; }, 4000);
-    location.reload(); // einfaches Neuladen — die Cache-Control-Meta-Tags oben sorgen dafür, dass dabei eine frische Version geholt wird
+    try{
+      // Erst per fetch() gezielt eine frische Version vom Server anfordern (cache:'reload' erzwingt das
+      // Umgehen jeglichen Zwischenspeichers) — das gibt uns eine klare Fehlermeldung, falls kein Internet
+      // da ist, statt dass die Seite einfach nur wortlos hängen bleibt.
+      const antwort = await Promise.race([
+        fetch(location.href, {cache:'reload'}),
+        new Promise((_,reject)=>setTimeout(()=>reject(new Error('Zeitüberschreitung')), 8000)),
+      ]);
+      if(!antwort.ok) throw new Error('Server antwortet mit Fehler ' + antwort.status);
+      // Navigation zur selben Adresse (statt reload()) — funktioniert in installierten Home-Bildschirm-Apps
+      // in der Praxis zuverlässiger.
+      location.replace(location.href);
+    }catch(err){
+      btn.textContent = '🔄 Nach Updates suchen'; btn.disabled = false;
+      zeigeToast('⚠️ Kein Internet oder Server nicht erreichbar');
+    }
   });
 }
 
