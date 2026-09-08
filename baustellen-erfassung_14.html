@@ -597,19 +597,9 @@ function renderAuftragAuswahlVollbild(){
         </select>
         <button class="btn primary full" id="na_anlegen">+ Auftrag anlegen</button>
       </div>
-      <div class="card">
-        <h2>💾 Sicherung wiederherstellen</h2>
-        <div style="font-size:13px; color:var(--text-dim2); margin-bottom:12px; line-height:1.5">Hast du schon eine Sicherung dieser App (z. B. von einem alten Handy)? Hier einspielen — ersetzt den kompletten aktuellen Stand.</div>
-        <input type="file" id="ruecksichern_input_start" accept="application/json" style="display:none">
-        <button class="btn ghost full" id="ruecksichern_btn_start">⬆️ Sicherung einspielen</button>
-      </div>
     </main>`;
 }
 function bindAuftragAuswahlVollbild(){
-  el_ruecksichern_bindung: {
-    document.getElementById('ruecksichern_btn_start')?.addEventListener('click', ()=>document.getElementById('ruecksichern_input_start').click());
-    document.getElementById('ruecksichern_input_start')?.addEventListener('change', e=>spieleSicherungEin(e));
-  }
   document.getElementById('ob_nur_fertigung')?.addEventListener('change', async e=>{
     DB.nurFertigungAnzeigen = e.target.checked;
     await speichereJetzt(); render();
@@ -1432,37 +1422,6 @@ function verkleinereBild(file){
 }
 
 /* ============================= TAB: EXPORT ============================= */
-async function spieleSicherungEin(e){
-  const file = e.target.files[0];
-  e.target.value = '';
-  if(!file) return;
-  try{
-    const text = await file.text();
-    const daten = JSON.parse(text);
-    if(daten.typ !== 'werkstatt-erfassung-sicherung'){
-      alert('⚠️ Das ist keine gültige Sicherungsdatei dieser App.');
-      return;
-    }
-    const ok = await bestaetigenDialog({titel:'Sicherung einspielen?', text:'Den aktuellen Stand auf diesem Handy komplett durch die Sicherung ersetzen? Nicht gesicherte, neuere Daten gehen dabei verloren.', okText:'Einspielen', gefaehrlich:true});
-    if(!ok) return;
-    DB.mitarbeiter = daten.mitarbeiter || DB.mitarbeiter;
-    DB.bekannteMitarbeiter = daten.bekannteMitarbeiter || [];
-    DB.materialKatalog = daten.materialKatalog || DB.materialKatalog;
-    DB.beschlagKatalog = daten.beschlagKatalog || DB.beschlagKatalog;
-    DB.auftraege = daten.auftraege || [];
-    DB.zeiten = daten.zeiten || [];
-    DB.material = daten.material || [];
-    DB.fotos = daten.fotos || [];
-    DB.stoppuhr = daten.stoppuhr || null;
-    DB.exportiertBis = daten.exportiertBis || null;
-    DB.aktiverAuftragId = null;
-    await speichereJetzt();
-    zeigeToast('Sicherung eingespielt ✓');
-    render();
-  }catch(err){
-    alert('⚠️ Datei konnte nicht gelesen werden: ' + (err.message||err));
-  }
-}
 /* ============================= TAB: KONTO (persönliches Zeitkonto) ============================= */
 let kontoCloudDaten = null; // zuletzt aus der Cloud geladene Zeitkonto-Einstellungen (mitarbeiter1/2)
 async function ladeKontoCloudDaten(){
@@ -1583,29 +1542,11 @@ function renderExportTab(){
       ${DB.exportiertBis ? `<div style="text-align:center; font-size:12px; color:var(--text-dim2); margin-top:10px">Zuletzt exportiert: ${new Date(DB.exportiertBis).toLocaleString('de-DE')}</div>` : ''}
     </div>
     <div class="card">
-      <h2>💾 Sichern &amp; Zurücksichern</h2>
-      <div style="font-size:13.5px; color:var(--text-dim2); margin-bottom:14px; line-height:1.5">
-        Unabhängig vom Export nach MöbelKalk: sichert den <b>kompletten Stand dieses Handys</b> (alle Aufträge, Zeiten, Material, Fotos, bekannte Mitarbeiter) in eine eigene Datei. Praktisch als Sicherheitsnetz oder um auf ein neues Handy umzuziehen.
-      </div>
-      <div class="btn-row">
-        <button class="btn ghost" style="flex:1" id="sichern_btn">💾 Sichern</button>
-        <button class="btn ghost" style="flex:1" id="ruecksichern_btn">⬆️ Zurücksichern</button>
-      </div>
-      <input type="file" id="ruecksichern_input" accept="application/json" style="display:none">
-    </div>
-    <div class="card">
       <h2>🔄 App-Version</h2>
       <div style="font-size:13.5px; color:var(--text-dim2); margin-bottom:14px; line-height:1.5">
         Falls eine neue Version auf GitHub hochgeladen wurde, hier antippen, um sie zu laden — ganz ohne das Icon zu löschen. Funktioniert nur mit Internetverbindung.
       </div>
       <button class="btn ghost full" id="update_check_btn">🔄 Nach Updates suchen</button>
-    </div>
-    <div class="card">
-      <h2>Nach erfolgreichem Import im Büro</h2>
-      <div style="font-size:13.5px; color:var(--text-dim2); margin-bottom:14px; line-height:1.5">
-        Sobald die Daten im Büro sicher übernommen wurden, kannst du hier alles zurücksetzen, um für den nächsten Auftrag von vorne zu beginnen. Das löscht nur die Daten auf diesem Handy, nicht in MöbelKalk.
-      </div>
-      <button class="btn danger full" id="reset_btn">🗑 Alle Daten auf diesem Handy löschen</button>
     </div>`;
 }
 function bindExportTab(){
@@ -1693,34 +1634,6 @@ function bindExportTab(){
     render();
     zeigeToast('Export erstellt ✓');
   });
-  document.getElementById('sichern_btn').addEventListener('click', ()=>{
-    const payload = {
-      typ: 'werkstatt-erfassung-sicherung',
-      version: 1,
-      sicherungZeitpunkt: new Date().toISOString(),
-      mitarbeiter: DB.mitarbeiter,
-      bekannteMitarbeiter: DB.bekannteMitarbeiter,
-      materialKatalog: DB.materialKatalog,
-      beschlagKatalog: DB.beschlagKatalog,
-      auftraege: DB.auftraege,
-      zeiten: DB.zeiten,
-      material: DB.material,
-      fotos: DB.fotos,
-      stoppuhr: DB.stoppuhr,
-      exportiertBis: DB.exportiertBis,
-    };
-    const blob = new Blob([JSON.stringify(payload)], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a3 = document.createElement('a');
-    const datumStr = new Date().toISOString().slice(0,10);
-    a3.href = url;
-    a3.download = `Werkstatt-Sicherung_${DB.mitarbeiter.replace(/\s+/g,'-')}_${datumStr}.json`;
-    document.body.appendChild(a3); a3.click(); a3.remove();
-    URL.revokeObjectURL(url);
-    zeigeToast('Sicherung erstellt ✓');
-  });
-  document.getElementById('ruecksichern_btn').addEventListener('click', ()=>document.getElementById('ruecksichern_input').click());
-  document.getElementById('ruecksichern_input').addEventListener('change', spieleSicherungEin);
   document.getElementById('update_check_btn')?.addEventListener('click', async ()=>{
     if(DB.stoppuhr){ zeigeToast('⚠️ Erst Stoppuhr anhalten, dann aktualisieren'); return; }
     await speichereJetzt(); // sicherstellen, dass noch nichts Ungespeichertes verloren geht
@@ -1731,15 +1644,6 @@ function bindExportTab(){
     // Cache-Buster an die URL anhängen, erzwingt beim Neuladen eine frische Version von der Cloud statt aus dem Zwischenspeicher
     const neueUrl = location.pathname + '?v=' + Date.now();
     location.href = neueUrl;
-  });
-  document.getElementById('reset_btn').addEventListener('click', async ()=>{
-    const ok1 = await bestaetigenDialog({titel:'Wirklich alles löschen?', text:'Wirklich ALLE Aufträge, Stunden, Material und Fotos auf diesem Handy löschen? Das kann nicht rückgängig gemacht werden.', okText:'Löschen', gefaehrlich:true});
-    if(!ok1) return;
-    const ok2 = await bestaetigenDialog({titel:'Ganz sicher?', text:'Am besten vorher nochmal exportieren, falls noch nicht geschehen.', okText:'Ja, jetzt löschen', gefaehrlich:true});
-    if(!ok2) return;
-    DB.auftraege = []; DB.zeiten = []; DB.material = []; DB.fotos = []; DB.aktiverAuftragId = null; DB.stoppuhr = null;
-    await speichereJetzt();
-    render();
   });
 }
 
