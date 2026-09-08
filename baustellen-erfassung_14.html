@@ -2,6 +2,9 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -130,20 +133,20 @@
   .field-row > div{flex:1;}
 
   .listitem{
-    display:flex; align-items:center; gap:10px; padding:12px 0;
+    display:flex; align-items:center; gap:12px; padding:14px 0;
     border-bottom:1px solid var(--line);
   }
   .listitem:last-child{border-bottom:none;}
   .listitem .icon{
-    width:38px; height:38px; border-radius:10px; background:var(--card-2);
-    display:flex; align-items:center; justify-content:center; font-size:17px; flex-shrink:0;
+    width:42px; height:42px; border-radius:11px; background:var(--card-2);
+    display:flex; align-items:center; justify-content:center; font-size:19px; flex-shrink:0;
   }
   .listitem .main{flex:1; min-width:0;}
-  .listitem .title{font-weight:700; font-size:14.5px;}
-  .listitem .meta{font-size:12.5px; color:var(--text-dim2); margin-top:1px;}
-  .listitem .val{font-weight:800; font-size:14.5px; color:var(--accent); white-space:nowrap;}
-  .listitem .del{color:var(--text-dim2); font-size:18px; padding:4px 6px; cursor:pointer;}
-  .listitem .menge-bearbeiten{color:var(--accent); font-size:16px; padding:6px 8px; cursor:pointer;}
+  .listitem .title{font-weight:700; font-size:16px;}
+  .listitem .meta{font-size:14px; color:var(--text-dim2); margin-top:2px;}
+  .listitem .val{font-weight:800; font-size:16px; color:var(--accent); white-space:nowrap;}
+  .listitem .del{color:var(--text-dim2); font-size:20px; padding:5px 7px; cursor:pointer;}
+  .listitem .menge-bearbeiten{color:var(--accent); font-size:18px; padding:6px 8px; cursor:pointer;}
 
   .empty{text-align:center; padding:30px 10px; color:var(--text-dim2); font-size:14px;}
   .empty .big{font-size:34px; margin-bottom:8px;}
@@ -959,11 +962,11 @@ function renderZeitTab(){
               <div class="title">${escapeHtml(g.schritt)} · ${fmtDauer(g.dauerMin)}${g.km?` · ${g.km} km`:''}</div>
               <div class="meta">${[...g.mitarbeiterSet].map(escapeHtml).join(', ')}${(g.ids.length>1 && g.notizen.length)?' · '+g.notizen.map(escapeHtml).join('; '):''}${g.ids.length>1?` · ${g.ids.length} Einträge ${istAufgeklappt?'▲ einklappen':'▼ antippen zum Bearbeiten'}`:''}</div>
               ${zeitenDirektEditierbar ? `<div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap">
-                <button type="button" class="btn btn-ghost btn-sm" data-zeit-start-oeffnen="${g.ids[0]}" style="padding:5px 10px;font-size:13px">${g.startZeit||'Start'}</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-zeit-start-oeffnen="${g.ids[0]}" style="padding:8px 13px;font-size:15px">${g.startZeit||'Start'}</button>
                 <span class="small">–</span>
-                <button type="button" class="btn btn-ghost btn-sm" data-zeit-end-oeffnen="${g.ids[0]}" style="padding:5px 10px;font-size:13px">${g.endZeit||'Ende'}</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-zeit-end-oeffnen="${g.ids[0]}" style="padding:8px 13px;font-size:15px">${g.endZeit||'Ende'}</button>
                 ${!g.startZeit ? `<span class="small" style="opacity:.6">← Uhrzeit eintragen</span>` : ''}
-                <button type="button" class="btn btn-ghost btn-sm" data-zeit-pause-oeffnen="${g.ids[0]}" style="padding:5px 10px;font-size:13px;opacity:.8">⏸ ${g.pausenMin?g.pausenMin+' Min. Pause':'Pause'}</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-zeit-pause-oeffnen="${g.ids[0]}" style="padding:8px 13px;font-size:15px;opacity:.8">⏸ ${g.pausenMin?g.pausenMin+' Min. Pause':'Pause'}</button>
               </div>
               <input type="text" value="${escapeHtml(g.notizen[0]||'')}" data-zeit-notiz="${g.ids[0]}" placeholder="Notiz hinzufügen (optional)" style="margin:6px 0 0 0;padding:8px 10px;font-size:13px">` : ''}
             </div>
@@ -974,11 +977,11 @@ function renderZeitTab(){
               <div class="main">
                 <div class="meta">${escapeHtml(z.mitarbeiter)} · ${fmtDauer(z.dauerMin)}</div>
                 <div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap">
-                  <button type="button" class="btn btn-ghost btn-sm" data-zeit-start-oeffnen="${z.id}" style="padding:5px 10px;font-size:13px">${z.startZeit||'Start'}</button>
+                  <button type="button" class="btn btn-ghost btn-sm" data-zeit-start-oeffnen="${z.id}" style="padding:8px 13px;font-size:15px">${z.startZeit||'Start'}</button>
                   <span class="small">–</span>
-                  <button type="button" class="btn btn-ghost btn-sm" data-zeit-end-oeffnen="${z.id}" style="padding:5px 10px;font-size:13px">${z.endZeit||'Ende'}</button>
+                  <button type="button" class="btn btn-ghost btn-sm" data-zeit-end-oeffnen="${z.id}" style="padding:8px 13px;font-size:15px">${z.endZeit||'Ende'}</button>
                   ${!z.startZeit ? `<span class="small" style="opacity:.6">← Uhrzeit eintragen</span>` : ''}
-                  <button type="button" class="btn btn-ghost btn-sm" data-zeit-pause-oeffnen="${z.id}" style="padding:5px 10px;font-size:13px;opacity:.8">⏸ ${z.pausenMin?z.pausenMin+' Min. Pause':'Pause'}</button>
+                  <button type="button" class="btn btn-ghost btn-sm" data-zeit-pause-oeffnen="${z.id}" style="padding:8px 13px;font-size:15px;opacity:.8">⏸ ${z.pausenMin?z.pausenMin+' Min. Pause':'Pause'}</button>
                 </div>
                 <input type="text" value="${escapeHtml(z.notiz||'')}" data-zeit-notiz="${z.id}" placeholder="Notiz hinzufügen (optional)" style="margin:6px 0 0 0;padding:8px 10px;font-size:13px">
               </div>
@@ -1591,6 +1594,13 @@ function renderExportTab(){
       <input type="file" id="ruecksichern_input" accept="application/json" style="display:none">
     </div>
     <div class="card">
+      <h2>🔄 App-Version</h2>
+      <div style="font-size:13.5px; color:var(--text-dim2); margin-bottom:14px; line-height:1.5">
+        Falls eine neue Version auf GitHub hochgeladen wurde, hier antippen, um sie zu laden — ganz ohne das Icon zu löschen. Funktioniert nur mit Internetverbindung.
+      </div>
+      <button class="btn ghost full" id="update_check_btn">🔄 Nach Updates suchen</button>
+    </div>
+    <div class="card">
       <h2>Nach erfolgreichem Import im Büro</h2>
       <div style="font-size:13.5px; color:var(--text-dim2); margin-bottom:14px; line-height:1.5">
         Sobald die Daten im Büro sicher übernommen wurden, kannst du hier alles zurücksetzen, um für den nächsten Auftrag von vorne zu beginnen. Das löscht nur die Daten auf diesem Handy, nicht in MöbelKalk.
@@ -1711,6 +1721,17 @@ function bindExportTab(){
   });
   document.getElementById('ruecksichern_btn').addEventListener('click', ()=>document.getElementById('ruecksichern_input').click());
   document.getElementById('ruecksichern_input').addEventListener('change', spieleSicherungEin);
+  document.getElementById('update_check_btn')?.addEventListener('click', async ()=>{
+    if(DB.stoppuhr){ zeigeToast('⚠️ Erst Stoppuhr anhalten, dann aktualisieren'); return; }
+    await speichereJetzt(); // sicherstellen, dass noch nichts Ungespeichertes verloren geht
+    // Eventuell vom Browser zwischengespeicherte Ressourcen (Cache API) explizit leeren, falls vorhanden
+    if('caches' in window){
+      try{ const keys = await caches.keys(); await Promise.all(keys.map(k=>caches.delete(k))); }catch(e){}
+    }
+    // Cache-Buster an die URL anhängen, erzwingt beim Neuladen eine frische Version von der Cloud statt aus dem Zwischenspeicher
+    const neueUrl = location.pathname + '?v=' + Date.now();
+    location.href = neueUrl;
+  });
   document.getElementById('reset_btn').addEventListener('click', async ()=>{
     const ok1 = await bestaetigenDialog({titel:'Wirklich alles löschen?', text:'Wirklich ALLE Aufträge, Stunden, Material und Fotos auf diesem Handy löschen? Das kann nicht rückgängig gemacht werden.', okText:'Löschen', gefaehrlich:true});
     if(!ok1) return;
