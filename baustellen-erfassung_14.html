@@ -1634,16 +1634,15 @@ function bindExportTab(){
     render();
     zeigeToast('Export erstellt ✓');
   });
-  document.getElementById('update_check_btn')?.addEventListener('click', async ()=>{
+  document.getElementById('update_check_btn')?.addEventListener('click', async e=>{
     if(DB.stoppuhr){ zeigeToast('⚠️ Erst Stoppuhr anhalten, dann aktualisieren'); return; }
+    const btn = e.currentTarget;
+    btn.textContent = '⏳ wird geladen …'; btn.disabled = true;
     await speichereJetzt(); // sicherstellen, dass noch nichts Ungespeichertes verloren geht
-    // Eventuell vom Browser zwischengespeicherte Ressourcen (Cache API) explizit leeren, falls vorhanden
-    if('caches' in window){
-      try{ const keys = await caches.keys(); await Promise.all(keys.map(k=>caches.delete(k))); }catch(e){}
-    }
-    // Cache-Buster an die URL anhängen, erzwingt beim Neuladen eine frische Version von der Cloud statt aus dem Zwischenspeicher
-    const neueUrl = location.pathname + '?v=' + Date.now();
-    location.href = neueUrl;
+    // Sicherheitsnetz: falls das Neuladen aus irgendeinem Grund nicht durchstartet, nach 4 Sekunden
+    // den Button wieder freigeben, statt dass er dauerhaft "hängen" bleibt.
+    setTimeout(()=>{ btn.textContent = '🔄 Nach Updates suchen'; btn.disabled = false; }, 4000);
+    location.reload(); // einfaches Neuladen — die Cache-Control-Meta-Tags oben sorgen dafür, dass dabei eine frische Version geholt wird
   });
 }
 
