@@ -913,6 +913,17 @@ function renderZeitTab(){
       ${Object.keys(jeSchritt).length ? `<div class="schritt-summary">
         ${Object.entries(jeSchritt).map(([s,min])=>`<div class="schritt-summary-row"><span>${escapeHtml(s)}</span><b>${(min/60).toFixed(2)} Std.</b></div>`).join('')}
       </div>` : ''}
+      <div class="card-kompakt" style="padding:12px 0 0 0; margin:6px 0 10px 0; border-top:1px dashed var(--line)">
+        <h2 style="margin-bottom:8px">Manuell eintragen — ${escapeHtml(gewaehlterSchritt)}</h2>
+        <div class="field-row">
+          <div style="flex:0 0 100px"><label>Stunden</label><input id="man_std" type="number" min="0" step="0.25" inputmode="decimal" placeholder="0"></div>
+          <div><label>Datum</label><input id="man_datum" type="date" value="${heute()}"></div>
+        </div>
+        ${istBaustelle ? `<label>Kilometer (Fahrtstrecke)</label><input id="man_km" type="number" min="0" step="1" inputmode="numeric" placeholder="0">` : ''}
+        <label>Notiz (optional)</label>
+        <input id="man_notiz" placeholder="z. B. Sonderanfertigung Griffe …">
+        <button class="btn primary full" id="man_add">+ Hinzufügen</button>
+      </div>
       ${(()=>{
         // Nach Tag + Tätigkeit gruppieren, statt jeden einzelnen Stoppuhr-/Manuell-Eintrag separat aufzulisten
         const gruppen = {};
@@ -977,17 +988,6 @@ function renderZeitTab(){
               <div class="del" data-del-zeitgruppe="${z.id}">✕</div>
             </div>`).join('') : ''}`;}).join('') : `<div class="empty">Noch keine Zeit erfasst.</div>`;
       })()}
-    </div>
-    <div class="card card-kompakt">
-      <h2>Manuell eintragen — ${escapeHtml(gewaehlterSchritt)}</h2>
-      <div class="field-row">
-        <div style="flex:0 0 100px"><label>Stunden</label><input id="man_std" type="number" min="0" step="0.25" inputmode="decimal" placeholder="0"></div>
-        <div><label>Datum</label><input id="man_datum" type="date" value="${heute()}"></div>
-      </div>
-      ${istBaustelle ? `<label>Kilometer (Fahrtstrecke)</label><input id="man_km" type="number" min="0" step="1" inputmode="numeric" placeholder="0">` : ''}
-      <label>Notiz (optional)</label>
-      <input id="man_notiz" placeholder="z. B. Sonderanfertigung Griffe …">
-      <button class="btn primary full" id="man_add">+ Hinzufügen</button>
     </div>`;
 }
 function bindZeitTab(){
