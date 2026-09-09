@@ -209,6 +209,16 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script>
+/* Absicherung: falls jemals versehentlich ein Service Worker registriert wurde (auch aus einer sehr alten
+   Version dieser Datei), hartnäckig aufräumen — ein Service Worker bleibt sonst dauerhaft aktiv und kann
+   künftige Aktualisierungen blockieren, selbst wenn der Code dafür längst wieder entfernt wurde. */
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.getRegistrations().then(regs=>{
+    regs.forEach(reg=>reg.unregister());
+  }).catch(()=>{});
+}
+</script>
+<script>
 /* ---------------------------- CLOUD-SYNC (Firebase) ---------------------------- */
 const WERKSTATT_ID = 'eqeig2timcdpjoqsr6t7zkkn';
 const firebaseConfig = {
