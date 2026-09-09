@@ -1016,14 +1016,20 @@ function bindZeitTab(){
             km = parseFloat(kmEingabe)||0;
           }
           const notiz = '';
-          const startUhrzeit = fmtUhrzeitHHMM(DB.stoppuhr.startZeit);
+          // Falls gerade pausiert gestoppt wird, die laufende Pause bis jetzt noch mitzählen
+          let pausenMsGesamt = DB.stoppuhr.pausenMs||0;
+          if(DB.stoppuhr.pausiert) pausenMsGesamt += (Date.now() - DB.stoppuhr.pausierteSeit);
+          const pausenMin = Math.round(pausenMsGesamt/60000);
+          // Immer die ursprüngliche Startzeit verwenden (nicht die durch "Weiter" nach einer Pause
+          // überschriebene) — sonst geht beim Stoppen nach einer Pause die echte Startzeit verloren.
+          const startUhrzeit = fmtUhrzeitHHMM(DB.stoppuhr.urspruenglicherStart||DB.stoppuhr.startZeit);
           const endUhrzeit = fmtUhrzeitHHMM(Date.now());
           const schrittZumSpeichern = DB.stoppuhr.schritt;
           DB.stoppuhr = null; // SOFORT zurücksetzen, bevor await-Aufrufe folgen — sonst könnte ein zweiter, fast
           // gleichzeitiger Klick denselben (noch nicht zurückgesetzten) Zustand nochmal verarbeiten und den
           // Eintrag doppelt anlegen.
           if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
-          await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:schrittZumSpeichern, dauerMin:Math.round(dauerMin*4)/4, km, notiz, quelle:'stoppuhr', startZeit:startUhrzeit, endZeit:endUhrzeit});
+          await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), schritt:schrittZumSpeichern, dauerMin:Math.round(dauerMin*4)/4, km, notiz, pausenMin, quelle:'stoppuhr', startZeit:startUhrzeit, endZeit:endUhrzeit});
         } else {
           DB.stoppuhr = null;
           if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
@@ -1032,7 +1038,7 @@ function bindZeitTab(){
         render();
         zeigeToast('Zeit gespeichert ✓');
       } else {
-        DB.stoppuhr = {startZeit:Date.now(), auftragId:a.id, schritt:gewaehlterSchritt, pausiert:false, angesammelteMs:0};
+        DB.stoppuhr = {startZeit:Date.now(), urspruenglicherStart:Date.now(), auftragId:a.id, schritt:gewaehlterSchritt, pausiert:false, angesammelteMs:0, pausenMs:0};
         await speichereJetzt();
         render();
         starteStoppuhrAnzeige();
@@ -1044,7 +1050,9 @@ function bindZeitTab(){
   document.getElementById('stoppuhr_pause_btn')?.addEventListener('click', async ()=>{
     if(!DB.stoppuhr) return;
     if(DB.stoppuhr.pausiert){
-      // Weiter: neuer Zeitabschnitt beginnt jetzt
+      // Weiter: neuer Zeitabschnitt beginnt jetzt — die vergangene Pausenzeit bis hierhin mitzählen,
+      // damit sie beim Stoppen korrekt ins Pausenfeld übernommen werden kann.
+      DB.stoppuhr.pausenMs = (DB.stoppuhr.pausenMs||0) + (Date.now() - DB.stoppuhr.pausierteSeit);
       DB.stoppuhr.startZeit = Date.now();
       DB.stoppuhr.pausiert = false;
       starteStoppuhrAnzeige();
@@ -1052,6 +1060,7 @@ function bindZeitTab(){
       // Pause: aktuellen Abschnitt einrechnen und anhalten
       DB.stoppuhr.angesammelteMs = (DB.stoppuhr.angesammelteMs||0) + (Date.now()-DB.stoppuhr.startZeit);
       DB.stoppuhr.pausiert = true;
+      DB.stoppuhr.pausierteSeit = Date.now();
       if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
     }
     await speichereJetzt();
