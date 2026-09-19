@@ -412,7 +412,7 @@ const DB = {
   fotos: [],            // {id, auftragId, mitarbeiter, datum, dataUrl, notiz}
   stoppuhr: null,        // {startZeit, auftragId, schritt, pausiertSeit, pausenMs} oder null
   exportiertBis: null,   // ISO-Zeitstempel der letzten Export-Erstellung (nur Info)
-  nurFertigungAnzeigen: false, // Filter: nur Aufträge zeigen, die in MöbelKalk auf "Fertigung" stehen
+  nurFertigungAnzeigen: true, // Filter: nur Aufträge zeigen, die in MöbelKalk auf "Fertigung" stehen
 };
 
 async function ladeAlles(){
