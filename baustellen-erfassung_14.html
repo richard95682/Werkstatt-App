@@ -491,13 +491,26 @@ function eingabeDialog({titel, label, wert='', typ='text', abbrechenText='Abbrec
     </div>`;
     document.body.appendChild(backdrop);
     const feld = backdrop.querySelector('#eingabe_dialog_feld');
-    feld.focus(); feld.select();
+    feld.focus({preventScroll:true}); feld.select();
     const schliessen = ergebnis=>{ backdrop.remove(); resolve(ergebnis); };
     backdrop.addEventListener('click', e=>{ if(e.target===backdrop) schliessen(null); });
     backdrop.querySelector('#eingabe_dialog_abbrechen').addEventListener('click', ()=>schliessen(null));
     backdrop.querySelector('#eingabe_dialog_ok').addEventListener('click', ()=>schliessen(feld.value));
     feld.addEventListener('keydown', e=>{ if(e.key==='Enter') schliessen(feld.value); });
   });
+}
+// Öffnet eingabeDialog, merkt sich aber vorher die Scroll-Position und stellt sie danach wieder her — das
+// Fokussieren des Eingabefelds im Dialog (feld.focus()) kann die Seite verschieben, wodurch beim
+// anschließenden Neu-Rendern sonst fälschlich diese verschobene Position "eingefroren" würde.
+async function eingabeDialogOhneVerspringen(optionen){
+  const scrollVorher = window.scrollY;
+  const ergebnis = await eingabeDialog(optionen);
+  window.scrollTo(0, scrollVorher);
+  // Zusätzlich leicht verzögert nochmal setzen — falls das Schließen der virtuellen Tastatur (auf dem
+  // echten Handy) die Seite erst NACH diesem Punkt noch einmal verschiebt.
+  requestAnimationFrame(()=>window.scrollTo(0, scrollVorher));
+  setTimeout(()=>window.scrollTo(0, scrollVorher), 150);
+  return ergebnis;
 }
 function bestaetigenDialog({titel, text, okText='Ja', abbrechenText='Abbrechen', gefaehrlich=false}){
   return new Promise(resolve=>{
@@ -533,6 +546,9 @@ function render(){
     bindAuftragAuswahlVollbild();
     return;
   }
+  // Scroll-Position vor dem kompletten Neu-Aufbau merken und danach wiederherstellen — sonst springt die
+  // Ansicht nach jeder Bearbeitung (z.B. Stunden, Pause, Kilometer ändern) unangenehm nach oben.
+  const scrollVorher = window.scrollY;
   app.innerHTML = `
     ${renderTopbar()}
     <main>${renderTabInhalt()}</main>
@@ -541,6 +557,7 @@ function render(){
   bindTopbar();
   bindTabbar();
   bindTabInhalt();
+  window.scrollTo(0, scrollVorher);
 }
 
 /* ---------- Onboarding (erster Start: Name eingeben) ---------- */
@@ -860,7 +877,21 @@ function renderZeitTab(){
   // Ein gerade eben über "+ eigener" neu angelegter Schritt hat noch KEINEN Zeit-Eintrag und würde sonst
   // hier fälschlich wieder verworfen werden — deshalb die aktuelle Auswahl (für DIESEN Auftrag) mit aufnehmen.
   if(gewaehlterSchritt && !verfuegbareSchritte.includes(gewaehlterSchritt)) verfuegbareSchritte = [...verfuegbareSchritte, gewaehlterSchritt];
-  if(!gewaehlterSchritt) gewaehlterSchritt = verfuegbareSchritte[0];
+  if(!gewaehlterSchritt){
+    // Standardmäßig mit dem zuletzt bearbeiteten Schritt weitermachen, statt immer wieder bei AV zu starten —
+    // dafür den jüngsten Zeit-Eintrag dieses Auftrags heranziehen (nach Datum, bei gleichem Datum nach Endzeit).
+    const eintraegeDiesesAuftrags = DB.zeiten.filter(z=>z.auftragId===a.id);
+    let letzterSchritt = null;
+    if(eintraegeDiesesAuftrags.length){
+      const juengster = eintraegeDiesesAuftrags.reduce((neuester,z)=>{
+        if(!neuester) return z;
+        if(z.datum!==neuester.datum) return z.datum>neuester.datum ? z : neuester;
+        return (z.endZeit||'')>(neuester.endZeit||'') ? z : neuester;
+      }, null);
+      letzterSchritt = juengster?.schritt;
+    }
+    gewaehlterSchritt = (letzterSchritt && verfuegbareSchritte.includes(letzterSchritt)) ? letzterSchritt : verfuegbareSchritte[0];
+  }
   gewaehlterSchrittAuftragId = a.id;
   const istBaustelle = gewaehlterSchritt === BAUSTELLE_SCHRITT;
   const eintraege = DB.zeiten.filter(z=>z.auftragId===a.id).sort((x,y)=>y.datum.localeCompare(x.datum));
@@ -967,6 +998,7 @@ function renderZeitTab(){
                 <button type="button" class="btn btn-ghost btn-sm" data-zeit-end-oeffnen="${g.ids[0]}" style="padding:8px 13px;font-size:15px">${g.endZeit||'Ende'}</button>
                 ${!g.startZeit ? `<span class="small" style="opacity:.6">← Uhrzeit eintragen</span>` : ''}
                 <button type="button" class="btn btn-ghost btn-sm" data-zeit-pause-oeffnen="${g.ids[0]}" style="padding:8px 13px;font-size:15px;opacity:.8">⏸ ${g.pausenMin?g.pausenMin+' Min. Pause':'Pause'}</button>
+                ${g.schritt===BAUSTELLE_SCHRITT ? `<button type="button" class="btn btn-ghost btn-sm" data-zeit-km-oeffnen="${g.ids[0]}" style="padding:8px 13px;font-size:15px;opacity:.8">🚐 ${g.km?g.km+' km':'Kilometer'}</button>` : ''}
               </div>
               <input type="text" value="${escapeHtml(g.notizen[0]||'')}" data-zeit-notiz="${g.ids[0]}" placeholder="Notiz hinzufügen (optional)" style="margin:6px 0 0 0;padding:8px 10px;font-size:13px">` : ''}
             </div>
@@ -982,6 +1014,7 @@ function renderZeitTab(){
                   <button type="button" class="btn btn-ghost btn-sm" data-zeit-end-oeffnen="${z.id}" style="padding:8px 13px;font-size:15px">${z.endZeit||'Ende'}</button>
                   ${!z.startZeit ? `<span class="small" style="opacity:.6">← Uhrzeit eintragen</span>` : ''}
                   <button type="button" class="btn btn-ghost btn-sm" data-zeit-pause-oeffnen="${z.id}" style="padding:8px 13px;font-size:15px;opacity:.8">⏸ ${z.pausenMin?z.pausenMin+' Min. Pause':'Pause'}</button>
+                  ${z.schritt===BAUSTELLE_SCHRITT ? `<button type="button" class="btn btn-ghost btn-sm" data-zeit-km-oeffnen="${z.id}" style="padding:8px 13px;font-size:15px;opacity:.8">🚐 ${z.km?z.km+' km':'Kilometer'}</button>` : ''}
                 </div>
                 <input type="text" value="${escapeHtml(z.notiz||'')}" data-zeit-notiz="${z.id}" placeholder="Notiz hinzufügen (optional)" style="margin:6px 0 0 0;padding:8px 10px;font-size:13px">
               </div>
@@ -1125,10 +1158,24 @@ function bindZeitTab(){
     const id = btn.dataset.zeitPauseOeffnen;
     const z = DB.zeiten.find(x=>x.id===id);
     if(!z) return;
-    const neuerWert = await eingabeDialog({titel:'Pausenzeit', label:'Minuten (wird von der Dauer abgezogen)', wert:String(z.pausenMin||0), typ:'number', okText:'Speichern'});
+    const neuerWert = await eingabeDialogOhneVerspringen({titel:'Pausenzeit', label:'Minuten (wird von der Dauer abgezogen)', wert:String(z.pausenMin||0), typ:'number', okText:'Speichern'});
     if(neuerWert===null) return; // abgebrochen
     const pauseMin = Math.max(0, parseFloat(neuerWert)||0);
     await aktualisiereZeitAusUhrzeiten(id, undefined, undefined, pauseMin);
+  }));
+  document.querySelectorAll('[data-zeit-km-oeffnen]').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const id = btn.dataset.zeitKmOeffnen;
+    const z = DB.zeiten.find(x=>x.id===id);
+    if(!z) return;
+    const neuerWert = await eingabeDialogOhneVerspringen({titel:'Kilometer', label:'Fahrtstrecke (km)', wert:String(z.km||0), typ:'number', okText:'Speichern'});
+    if(neuerWert===null) return; // abgebrochen
+    z.km = Math.max(0, parseFloat(neuerWert)||0);
+    await speichereJetzt();
+    if(cloudVerbunden){
+      try{ await cloudPfad('zeiten').doc(id).set(z); }
+      catch(err){ console.warn('Cloud-Update (Zeit-Kilometer) fehlgeschlagen:', err); }
+    }
+    render();
   }));
   document.querySelectorAll('[data-zeit-start-oeffnen]').forEach(btn=>btn.addEventListener('click', async ()=>{
     const id = btn.dataset.zeitStartOeffnen;
@@ -1137,7 +1184,7 @@ function bindZeitTab(){
     // Eigenes Dialogfenster mit explizitem "Speichern"-Knopf statt des nativen Zeitrads direkt in der Liste —
     // das native Rad schließt sich zwar (systembedingt) sofort beim Loslassen, aber übernommen wird der Wert
     // trotzdem erst, wenn hier bewusst auf "Speichern" getippt wird.
-    const neuerWert = await eingabeDialog({titel:'Startzeit', label:'Uhrzeit', wert:z.startZeit||'', typ:'time', okText:'Speichern'});
+    const neuerWert = await eingabeDialogOhneVerspringen({titel:'Startzeit', label:'Uhrzeit', wert:z.startZeit||'', typ:'time', okText:'Speichern'});
     if(neuerWert===null) return; // abgebrochen
     await aktualisiereZeitAusUhrzeiten(id, neuerWert, undefined);
   }));
@@ -1145,7 +1192,7 @@ function bindZeitTab(){
     const id = btn.dataset.zeitEndOeffnen;
     const z = DB.zeiten.find(x=>x.id===id);
     if(!z) return;
-    const neuerWert = await eingabeDialog({titel:'Endzeit', label:'Uhrzeit', wert:z.endZeit||'', typ:'time', okText:'Speichern'});
+    const neuerWert = await eingabeDialogOhneVerspringen({titel:'Endzeit', label:'Uhrzeit', wert:z.endZeit||'', typ:'time', okText:'Speichern'});
     if(neuerWert===null) return; // abgebrochen
     await aktualisiereZeitAusUhrzeiten(id, undefined, neuerWert);
   }));
