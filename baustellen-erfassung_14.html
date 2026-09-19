@@ -475,6 +475,23 @@ function zeigeToast(text){
 
 /* Eigene Eingabe-/Bestätigungs-Dialoge statt prompt()/confirm() — diese funktionieren auf dem iPhone
    nicht zuverlässig, wenn die App über "Zum Home-Bildschirm" im Vollbild-Modus (ohne Safari-Rahmen) läuft. */
+// Hält das Dialogfenster über der Bildschirmtastatur sichtbar — ohne das würde die Tastatur auf vielen
+// Handys das Eingabefeld verdecken, da die Seite die Tastatur sonst nicht mit einberechnet. Passt die Höhe
+// des Hintergrunds live an die tatsächlich sichtbare Fläche an (per VisualViewport-API, wo verfügbar).
+function haelteUeberTastatur(backdrop){
+  if(!window.visualViewport) return ()=>{};
+  const anpassen = ()=>{
+    backdrop.style.height = window.visualViewport.height + 'px';
+    backdrop.style.top = window.visualViewport.offsetTop + 'px';
+  };
+  anpassen();
+  window.visualViewport.addEventListener('resize', anpassen);
+  window.visualViewport.addEventListener('scroll', anpassen);
+  return ()=>{
+    window.visualViewport.removeEventListener('resize', anpassen);
+    window.visualViewport.removeEventListener('scroll', anpassen);
+  };
+}
 function eingabeDialog({titel, label, wert='', typ='text', abbrechenText='Abbrechen', okText='Übernehmen'}){
   return new Promise(resolve=>{
     const backdrop = document.createElement('div');
@@ -490,9 +507,10 @@ function eingabeDialog({titel, label, wert='', typ='text', abbrechenText='Abbrec
       </div>
     </div>`;
     document.body.appendChild(backdrop);
+    const tastaturAufraeumen = haelteUeberTastatur(backdrop);
     const feld = backdrop.querySelector('#eingabe_dialog_feld');
     feld.focus({preventScroll:true}); feld.select();
-    const schliessen = ergebnis=>{ backdrop.remove(); resolve(ergebnis); };
+    const schliessen = ergebnis=>{ tastaturAufraeumen(); backdrop.remove(); resolve(ergebnis); };
     backdrop.addEventListener('click', e=>{ if(e.target===backdrop) schliessen(null); });
     backdrop.querySelector('#eingabe_dialog_abbrechen').addEventListener('click', ()=>schliessen(null));
     backdrop.querySelector('#eingabe_dialog_ok').addEventListener('click', ()=>schliessen(feld.value));
