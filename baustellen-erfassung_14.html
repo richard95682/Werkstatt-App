@@ -763,7 +763,12 @@ function oeffneKatalogSuche(){
   function zeigeErgebnisse(filter){
     const f = filter.trim().toLowerCase();
     const treffer = f ? alleEintraege.filter(e=>e.name.toLowerCase().includes(f)) : alleEintraege;
-    if(!treffer.length){ ergebnisseEl.innerHTML = `<div class="empty">Nichts gefunden.</div>`; return; }
+    const eigenerEintragHtml = f ? `
+      <div class="listitem" data-katalog-eigener="${escapeHtml(filter.trim())}" style="cursor:pointer;border:1px dashed var(--accent);border-radius:10px;padding:10px;margin-bottom:10px">
+        <div class="icon">✏️</div>
+        <div class="main"><div class="title">„${escapeHtml(filter.trim())}“ so übernehmen</div><div class="meta">Nicht in der Liste? Trotzdem eintragen</div></div>
+      </div>` : '';
+    if(!treffer.length){ ergebnisseEl.innerHTML = eigenerEintragHtml || `<div class="empty">Suchbegriff eingeben, um „nicht gefunden“ trotzdem einzutragen.</div>`; bindEigenerEintrag(); return; }
     // Ohne Suchbegriff: nach Kategorie gruppiert anzeigen (wie in MöbelKalks Materialliste). Bei aktiver Suche: einfache flache Trefferliste.
     if(!f){
       const gruppen = {};
@@ -776,7 +781,7 @@ function oeffneKatalogSuche(){
             <div class="main"><div class="title">${escapeHtml(e.name)}</div></div>
           </div>`).join('')}`).join('');
     } else {
-      ergebnisseEl.innerHTML = treffer.slice(0,60).map(e=>`
+      ergebnisseEl.innerHTML = eigenerEintragHtml + treffer.slice(0,60).map(e=>`
         <div class="listitem" data-katalog-wahl="${escapeHtml(e.name)}" data-katalog-einheit="${escapeHtml(e.einheit||'')}" style="cursor:pointer">
           <div class="icon">${e.typ==='beschlag'?'🔩':'🪵'}</div>
           <div class="main"><div class="title">${escapeHtml(e.name)}</div></div>
@@ -791,6 +796,15 @@ function oeffneKatalogSuche(){
       document.getElementById('mat_bez').dispatchEvent(new Event('input', {bubbles:true}));
       document.getElementById('mat_menge').focus();
     }));
+    bindEigenerEintrag();
+  }
+  function bindEigenerEintrag(){
+    ergebnisseEl.querySelector('[data-katalog-eigener]')?.addEventListener('click', e=>{
+      document.getElementById('mat_bez').value = e.currentTarget.dataset.katalogEigener;
+      backdrop.remove();
+      document.getElementById('mat_bez').dispatchEvent(new Event('input', {bubbles:true}));
+      document.getElementById('mat_menge').focus();
+    });
   }
   zeigeErgebnisse('');
   backdrop.querySelector('#katalog_suche_input').addEventListener('input', e=>zeigeErgebnisse(e.target.value));
@@ -1282,7 +1296,7 @@ function renderMaterialTab(){
       </div>
       <div class="small" style="margin-bottom:12px;color:var(--text-dim2)">Menge weicht ab? Unten von Hand eintragen.</div>` : ''}
       ${(DB.materialKatalog.length || DB.beschlagKatalog.length) ? `<button class="btn ghost full" id="katalog_such_btn" style="margin-bottom:14px">🔍 Andere Materialien/Beschläge wählen</button>` : ''}
-      <label>Bezeichnung</label>
+      <label>Bezeichnung <span class="small" style="font-weight:400;opacity:.65">(auch eigene, nicht gelistete Materialien möglich)</span></label>
       <input id="mat_bez" placeholder="z. B. Spanplatte weiß 19mm">
       <div id="mat_stueck_zeile" style="display:none">
         <label>Stückzahl (ganze Platten)</label>
@@ -1296,6 +1310,10 @@ function renderMaterialTab(){
           <option value="kg">kg</option><option value="Liter">Liter</option><option value="Pauschal">Pauschal</option>
         </select></div>
       </div>
+      <div id="mat_preis_zeile" style="display:none">
+        <label>Preis pro Einheit (€) <span class="small" style="font-weight:400;opacity:.65">— unbekanntes Material, bitte Preis angeben</span></label>
+        <input id="mat_preis" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0">
+      </div>
       <button class="btn primary full" id="mat_add">+ Hinzufügen</button>
     </div>
     <div class="card">
@@ -1303,7 +1321,7 @@ function renderMaterialTab(){
       ${eintraege.length ? eintraege.map(m=>`
         <div class="listitem">
           <div class="icon">📦</div>
-          <div class="main"><div class="title">${escapeHtml(m.bezeichnung)}</div><div class="meta">${fmtDatum(m.datum)} · ${escapeHtml(m.mitarbeiter)}</div></div>
+          <div class="main"><div class="title">${escapeHtml(m.bezeichnung)}</div><div class="meta">${fmtDatum(m.datum)} · ${escapeHtml(m.mitarbeiter)}${(m.preis!==undefined && m.preis!==null)?` · ${m.preis.toFixed(2)} €/${escapeHtml(m.einheit)}`:''}</div></div>
           <div class="val">${m.menge} ${escapeHtml(m.einheit)}</div>
           <div class="menge-bearbeiten" data-menge-edit="${m.id}">✎</div>
           <div class="del" data-del-material="${m.id}">✕</div>
@@ -1312,6 +1330,8 @@ function renderMaterialTab(){
 }
 function bindMaterialTab(){
   const a = aktuellerAuftrag();
+  const bekannteMaterialien = a.materialien||[];
+  const bekannteBeschlaege = a.beschlaege||[];
   function speichereKantenIst(){
     const lfm = parseFloat(document.getElementById('kanten_lfm').value)||0;
     const puVerleimung = document.getElementById('kanten_pu').checked;
@@ -1334,6 +1354,18 @@ function bindMaterialTab(){
       zeile.style.display = 'none';
       document.getElementById('mat_stueck').value = '';
     }
+    // Preisfeld nur zeigen, wenn die Bezeichnung zu KEINEM bekannten Material/Beschlag passt (weder aus der
+    // Kalkulation dieses Auftrags noch aus dem allgemeinen MöbelKalk-Katalog) — bei bekannten Materialien
+    // kennt MöbelKalk den Preis bereits selbst, da braucht's hier keine doppelte Eingabe.
+    const bekannt = bez && (
+      bekannteMaterialien.some(n=>n.toLowerCase()===bez) ||
+      bekannteBeschlaege.some(b=>b.name.toLowerCase()===bez) ||
+      DB.materialKatalog.some(m=>m.name.toLowerCase()===bez) ||
+      DB.beschlagKatalog.some(b=>b.name.toLowerCase()===bez)
+    );
+    const preisZeile = document.getElementById('mat_preis_zeile');
+    preisZeile.style.display = (bez && !bekannt) ? '' : 'none';
+    if(bez && !bekannt) {} else document.getElementById('mat_preis').value = '';
   }
   document.getElementById('mat_bez').addEventListener('input', pruefeStueckUmrechnung);
   pruefeStueckUmrechnung();
@@ -1377,8 +1409,11 @@ function bindMaterialTab(){
     const menge = parseFloat(document.getElementById('mat_menge').value);
     if(!bezeichnung || !menge) return;
     const einheit = document.getElementById('mat_einheit').value;
-    await neueMaterialErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit});
+    const preisFeld = document.getElementById('mat_preis').value;
+    const preis = preisFeld ? (parseFloat(preisFeld)||0) : undefined;
+    await neueMaterialErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit, preis});
     await speichereJetzt();
+    document.getElementById('mat_preis').value = '';
     render();
     zeigeToast('Eingetragen ✓');
   });
