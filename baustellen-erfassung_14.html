@@ -979,7 +979,8 @@ function renderZeitTab(){
       <div class="card-kompakt" style="padding:12px 0 0 0; margin:6px 0 10px 0; border-top:1px dashed var(--line)">
         <h2 style="margin-bottom:8px">Manuell eintragen — ${escapeHtml(gewaehlterSchritt)}</h2>
         <div class="field-row">
-          <div style="flex:0 0 100px"><label>Stunden</label><input id="man_std" type="number" min="0" step="0.25" inputmode="decimal" placeholder="0"></div>
+          <div style="flex:0 0 75px"><label>Std.</label><input id="man_std" type="number" min="0" step="1" inputmode="numeric" placeholder="0"></div>
+          <div style="flex:0 0 75px"><label>Min.</label><input id="man_min" type="number" min="0" max="59" step="1" inputmode="numeric" placeholder="0"></div>
           <div><label>Datum</label><input id="man_datum" type="date" value="${heute()}"></div>
         </div>
         ${istBaustelle ? `<label>Kilometer (Fahrtstrecke)</label><input id="man_km" type="number" min="0" step="1" inputmode="numeric" placeholder="0">` : ''}
@@ -1000,7 +1001,15 @@ function renderZeitTab(){
           gruppen[key].ids.push(z.id);
           gruppen[key].einzelEintraege.push(z);
         });
-        const gruppenListe = Object.values(gruppen).sort((x,y)=>y.datum.localeCompare(x.datum));
+        const gruppenListe = Object.values(gruppen).sort((x,y)=>{
+          if(x.datum!==y.datum) return y.datum.localeCompare(x.datum);
+          // Bei gleichem Datum: die Gruppe mit dem zuletzt angelegten Eintrag zuerst zeigen (IDs enthalten
+          // einen Zeitstempel-Anteil, dadurch lässt sich "zuletzt bearbeitet" zuverlässig ableiten) —
+          // sonst würde der aktuellste Eintrag eines Tages immer ganz unten landen.
+          const xNeuesteId = x.ids.reduce((a,b)=>a>b?a:b, '');
+          const yNeuesteId = y.ids.reduce((a,b)=>a>b?a:b, '');
+          return yNeuesteId.localeCompare(xNeuesteId);
+        });
         // Tagesgesamt je Datum berechnen, um es zusätzlich als eigene Zeile pro Tag einzufügen
         const tagesgesamt = {};
         gruppenListe.forEach(g=>{ tagesgesamt[g.datum] = (tagesgesamt[g.datum]||0) + g.dauerMin; });
@@ -1137,13 +1146,15 @@ function bindZeitTab(){
     if(window.__manEintragLaeuft) return; // verhindert doppelte Einträge bei mehrfachem, schnellem Antippen
     window.__manEintragLaeuft = true;
     try{
-      const std = parseFloat(document.getElementById('man_std').value);
-      if(!std || std<=0) return;
+      const std = parseFloat(document.getElementById('man_std').value)||0;
+      const min = parseFloat(document.getElementById('man_min').value)||0;
+      const dauerMin = std*60 + min;
+      if(dauerMin<=0) return;
       const datum = document.getElementById('man_datum').value || heute();
       const notiz = document.getElementById('man_notiz').value.trim();
       const kmFeld = document.getElementById('man_km');
       const km = kmFeld ? (parseFloat(kmFeld.value)||0) : 0;
-      await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum, schritt:gewaehlterSchritt, dauerMin:std*60, km, notiz, quelle:'manuell'});
+      await neueZeitErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum, schritt:gewaehlterSchritt, dauerMin, km, notiz, quelle:'manuell'});
       await speichereJetzt();
       render();
       zeigeToast('Eingetragen ✓');
@@ -1354,14 +1365,13 @@ function bindMaterialTab(){
       zeile.style.display = 'none';
       document.getElementById('mat_stueck').value = '';
     }
-    // Preisfeld nur zeigen, wenn die Bezeichnung zu KEINEM bekannten Material/Beschlag passt (weder aus der
-    // Kalkulation dieses Auftrags noch aus dem allgemeinen MöbelKalk-Katalog) — bei bekannten Materialien
-    // kennt MöbelKalk den Preis bereits selbst, da braucht's hier keine doppelte Eingabe.
+    // Preisfeld nur verstecken, wenn die Bezeichnung zu einem bekannten Material/Beschlag aus MöbelKalks
+    // Katalog passt UND dort auch wirklich ein Preis hinterlegt ist — reiner Namenstreffer allein reicht
+    // nicht, sonst würde bei einem Katalogeintrag ohne Preis (z.B. noch 0€) trotzdem fälschlich kein
+    // Preisfeld angeboten.
     const bekannt = bez && (
-      bekannteMaterialien.some(n=>n.toLowerCase()===bez) ||
-      bekannteBeschlaege.some(b=>b.name.toLowerCase()===bez) ||
-      DB.materialKatalog.some(m=>m.name.toLowerCase()===bez) ||
-      DB.beschlagKatalog.some(b=>b.name.toLowerCase()===bez)
+      DB.materialKatalog.some(m=>m.name.toLowerCase()===bez && (m.preis||0)>0) ||
+      DB.beschlagKatalog.some(b=>b.name.toLowerCase()===bez && (b.preis||0)>0)
     );
     const preisZeile = document.getElementById('mat_preis_zeile');
     preisZeile.style.display = (bez && !bekannt) ? '' : 'none';
