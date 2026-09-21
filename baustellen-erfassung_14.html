@@ -1410,8 +1410,12 @@ function bindMaterialTab(){
     if(!bezeichnung || !menge) return;
     const einheit = document.getElementById('mat_einheit').value;
     const preisFeld = document.getElementById('mat_preis').value;
-    const preis = preisFeld ? (parseFloat(preisFeld)||0) : undefined;
-    await neueMaterialErfassung({id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit, preis});
+    const eintrag = {id:uid(), auftragId:a.id, mitarbeiter:DB.mitarbeiter, datum:heute(), bezeichnung, menge, einheit};
+    // "preis" nur ins Objekt aufnehmen, wenn wirklich einer eingetragen wurde — Firestore lehnt den Wert
+    // "undefined" für ein Feld komplett ab (der ganze Speichervorgang würde sonst fehlschlagen), daher darf
+    // das Feld beim Fehlen eines Preises gar nicht erst existieren, statt es auf undefined zu setzen.
+    if(preisFeld) eintrag.preis = parseFloat(preisFeld)||0;
+    await neueMaterialErfassung(eintrag);
     await speichereJetzt();
     document.getElementById('mat_preis').value = '';
     render();
