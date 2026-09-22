@@ -1655,10 +1655,12 @@ function renderExportTab(){
   const zeitAnzahl = DB.zeiten.length, matAnzahl = DB.material.length, fotoAnzahl = DB.fotos.length;
   const gesamtStd = (DB.zeiten.reduce((s,z)=>s+(z.dauerMin||0),0)/60).toFixed(1);
   return `
-    ${cloudVerbunden ? `<div class="hint ok" style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span>☁️ Cloud-Sync aktiv — Stunden, Material und Fotos werden automatisch übertragen, Aufträge automatisch aktuell gehalten.</span>
-      <button class="btn btn-ghost btn-sm" id="btnCloudNachholen" style="margin-left:auto">🔄 Alle Daten nachsenden</button>
-      <button class="btn btn-ghost btn-sm" id="btnCloudWiederherstellen">☁️⬇️ Stunden/Material aus Cloud laden</button>
+    ${cloudVerbunden ? `<div class="hint ok" style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span>☁️ Cloud-Sync aktiv — Stunden, Material und Fotos werden automatisch übertragen, Aufträge automatisch aktuell gehalten.</span>
+        <button class="btn btn-ghost btn-sm" id="btnCloudWiederherstellen" style="margin-left:auto">☁️⬇️ Stunden/Material aus Cloud laden</button>
+      </div>
+      <div class="small" style="opacity:.7;margin-top:6px">Für Notfälle oder ein neues Handy — holt bereits in der Cloud gespeicherte Stunden und Material auf dieses Gerät zurück.</div>
     </div>` : `<div class="hint warn" style="margin-bottom:12px">⚠️ Cloud-Sync gerade nicht verbunden — Stunden/Material bleiben lokal gespeichert und werden automatisch nachgesendet, sobald wieder Internet da ist.</div>`}
     <div class="card">
       <h2>🔄 App-Version</h2>
@@ -1704,15 +1706,6 @@ function bindExportTab(){
   });
   document.getElementById('export_keine_waehlen')?.addEventListener('click', ()=>{
     document.querySelectorAll('[data-export-auftrag]').forEach(cb=>cb.checked = false);
-  });
-  document.getElementById('btnCloudNachholen')?.addEventListener('click', async e=>{
-    const btn = e.currentTarget;
-    const alterText = btn.textContent;
-    btn.textContent = '⏳ sendet …'; btn.disabled = true;
-    cloudNachholSyncLief = false; // erzwingt erneutes Durchlaufen, auch wenn schon beim Start gelaufen
-    const {fotosGesendet, fotosFehlgeschlagen} = await cloudNachholSync();
-    zeigeToast(`✅ ${DB.zeiten.length} Zeiten + ${DB.material.length} Material + ${fotosGesendet} Foto(s) gesendet${fotosFehlgeschlagen>0?` (⚠️ ${fotosFehlgeschlagen} Foto(s) fehlgeschlagen)`:''}`);
-    btn.textContent = alterText; btn.disabled = false;
   });
   document.getElementById('btnCloudWiederherstellen')?.addEventListener('click', async e=>{
     const btn = e.currentTarget;
