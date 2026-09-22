@@ -1661,6 +1661,13 @@ function renderExportTab(){
       <button class="btn btn-ghost btn-sm" id="btnCloudWiederherstellen">☁️⬇️ Stunden/Material aus Cloud laden</button>
     </div>` : `<div class="hint warn" style="margin-bottom:12px">⚠️ Cloud-Sync gerade nicht verbunden — Stunden/Material bleiben lokal gespeichert und werden automatisch nachgesendet, sobald wieder Internet da ist.</div>`}
     <div class="card">
+      <h2>🔄 App-Version</h2>
+      <div style="font-size:13.5px; color:var(--text-dim2); margin-bottom:14px; line-height:1.5">
+        Falls eine neue Version auf GitHub hochgeladen wurde, hier antippen, um sie zu laden — ganz ohne das Icon zu löschen. Funktioniert nur mit Internetverbindung.
+      </div>
+      <button class="btn ghost full" id="update_check_btn">🔄 Nach Updates suchen</button>
+    </div>
+    <div class="card">
       <h2>Übersicht — alle Aufträge</h2>
       <div class="stat-row">
         <div class="stat"><div class="n">${gesamtStd}</div><div class="l">Std. gesamt</div></div>
@@ -1689,13 +1696,6 @@ function renderExportTab(){
       </div>` : `<div class="empty" style="padding:16px 0">Keine Aufträge vorhanden.</div>`}
       <button class="btn primary full" id="export_btn">📤 Ausgewählte exportieren</button>
       ${DB.exportiertBis ? `<div style="text-align:center; font-size:12px; color:var(--text-dim2); margin-top:10px">Zuletzt exportiert: ${new Date(DB.exportiertBis).toLocaleString('de-DE')}</div>` : ''}
-    </div>
-    <div class="card">
-      <h2>🔄 App-Version</h2>
-      <div style="font-size:13.5px; color:var(--text-dim2); margin-bottom:14px; line-height:1.5">
-        Falls eine neue Version auf GitHub hochgeladen wurde, hier antippen, um sie zu laden — ganz ohne das Icon zu löschen. Funktioniert nur mit Internetverbindung.
-      </div>
-      <button class="btn ghost full" id="update_check_btn">🔄 Nach Updates suchen</button>
     </div>`;
 }
 function bindExportTab(){
