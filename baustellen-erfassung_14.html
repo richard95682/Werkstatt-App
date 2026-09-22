@@ -1144,12 +1144,14 @@ function bindZeitTab(){
       DB.stoppuhr.startZeit = Date.now();
       DB.stoppuhr.pausiert = false;
       starteStoppuhrAnzeige();
+      sendeBenachrichtigung('▶️ Weiter', `${DB.stoppuhr.schritt} — ${a.name}`);
     } else {
       // Pause: aktuellen Abschnitt einrechnen und anhalten
       DB.stoppuhr.angesammelteMs = (DB.stoppuhr.angesammelteMs||0) + (Date.now()-DB.stoppuhr.startZeit);
       DB.stoppuhr.pausiert = true;
       DB.stoppuhr.pausierteSeit = Date.now();
       if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
+      sendeBenachrichtigung('⏸ Pause', `${DB.stoppuhr.schritt} — ${a.name}`);
     }
     await speichereJetzt();
     render();
