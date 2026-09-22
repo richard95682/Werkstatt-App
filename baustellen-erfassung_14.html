@@ -32,19 +32,19 @@
     --safe-top:env(safe-area-inset-top, 0px);
   }
   :root[data-theme="gruen"]{
-    --bg:#f4f7f0;
-    --card:#fbfdf9;
-    --card-2:#e8efe0;
-    --line:#d4e0c8;
-    --text:#1f2e18;
-    --text-dim:#5f785680;
-    --text-dim2:#5f7856;
-    --accent:#5a8f4a;
-    --accent-dark:#487a3a;
+    --bg:#e2edd6;
+    --card:#f3f9ee;
+    --card-2:#cde3ba;
+    --line:#a9c98e;
+    --text:#16260f;
+    --text-dim:#4a6b3980;
+    --text-dim2:#4a6b39;
+    --accent:#4a8f3a;
+    --accent-dark:#3a7a2c;
     --accent-text:#ffffff;
     --danger:#b54a39;
     --ok:#2a9d6f;
-    --tabbar-bg:rgba(244,247,240,.96);
+    --tabbar-bg:rgba(226,237,214,.96);
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{height:100%;}
@@ -436,7 +436,7 @@ async function ladeAlles(){
   if(gespeichert) Object.assign(DB, gespeichert);
   if(DB.theme==='gruen'){
     document.documentElement.setAttribute('data-theme', 'gruen');
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#f4f7f0');
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#e2edd6');
   }
 }
 let speicherTimer = null;
@@ -1733,7 +1733,7 @@ function bindExportTab(){
   document.getElementById('theme_gruen_btn')?.addEventListener('click', async ()=>{
     DB.theme = 'gruen';
     document.documentElement.setAttribute('data-theme', 'gruen');
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#f4f7f0');
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#e2edd6');
     await speichereJetzt();
     render();
   });
