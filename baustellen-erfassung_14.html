@@ -474,17 +474,6 @@ function zeigeToast(text){
   setTimeout(()=>t.remove(), 1800);
 }
 
-// Sendet eine Mitteilung (spiegelt sich normalerweise automatisch auf eine gekoppelte Apple Watch, da iPhone-
-// Mitteilungen dort standardmäßig angezeigt werden) — z.B. beim Starten/Stoppen der Stoppuhr, damit man auch
-// ohne aufs Handy zu schauen sieht, ob gerade Zeit erfasst wird. Fragt bei Bedarf einmalig um Erlaubnis.
-async function sendeBenachrichtigung(titel, text){
-  if(!('Notification' in window)) return; // ältere iOS-Versionen/Browser unterstützen das nicht
-  try{
-    if(Notification.permission==='default') await Notification.requestPermission();
-    if(Notification.permission==='granted') new Notification(titel, {body:text, tag:'stoppuhr-status', icon:undefined});
-  }catch(err){ console.warn('Mitteilung konnte nicht gesendet werden:', err); }
-}
-
 /* Eigene Eingabe-/Bestätigungs-Dialoge statt prompt()/confirm() — diese funktionieren auf dem iPhone
    nicht zuverlässig, wenn die App über "Zum Home-Bildschirm" im Vollbild-Modus (ohne Safari-Rahmen) läuft. */
 // Hält das Dialogfenster über der Bildschirmtastatur sichtbar — ohne das würde die Tastatur auf vielen
@@ -1123,13 +1112,11 @@ function bindZeitTab(){
         await speichereJetzt();
         render();
         zeigeToast('Zeit gespeichert ✓');
-        sendeBenachrichtigung('✅ Zeit gespeichert', `${fmtDauer(Math.round(dauerMin*4)/4)} erfasst`);
       } else {
         DB.stoppuhr = {startZeit:Date.now(), urspruenglicherStart:Date.now(), auftragId:a.id, schritt:gewaehlterSchritt, pausiert:false, angesammelteMs:0, pausenMs:0};
         await speichereJetzt();
         render();
         starteStoppuhrAnzeige();
-        sendeBenachrichtigung('⏱️ Stoppuhr läuft', `${gewaehlterSchritt} — ${a.name}`);
       }
     } finally {
       window.__stoppuhrVerarbeitungLaeuft = false;
@@ -1144,14 +1131,12 @@ function bindZeitTab(){
       DB.stoppuhr.startZeit = Date.now();
       DB.stoppuhr.pausiert = false;
       starteStoppuhrAnzeige();
-      sendeBenachrichtigung('▶️ Weiter', `${DB.stoppuhr.schritt} — ${a.name}`);
     } else {
       // Pause: aktuellen Abschnitt einrechnen und anhalten
       DB.stoppuhr.angesammelteMs = (DB.stoppuhr.angesammelteMs||0) + (Date.now()-DB.stoppuhr.startZeit);
       DB.stoppuhr.pausiert = true;
       DB.stoppuhr.pausierteSeit = Date.now();
       if(stoppuhrIntervall){ clearInterval(stoppuhrIntervall); stoppuhrIntervall=null; }
-      sendeBenachrichtigung('⏸ Pause', `${DB.stoppuhr.schritt} — ${a.name}`);
     }
     await speichereJetzt();
     render();
