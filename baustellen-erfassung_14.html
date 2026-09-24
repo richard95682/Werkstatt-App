@@ -1039,7 +1039,7 @@ function renderZeitTab(){
                 <span class="small">–</span>
                 <button type="button" class="btn btn-ghost btn-sm" data-zeit-end-oeffnen="${g.ids[0]}" style="padding:8px 13px;font-size:15px">${g.endZeit||'Ende'}</button>
                 ${!g.startZeit ? `<span class="small" style="opacity:.6">← Uhrzeit eintragen</span>` : ''}
-                <button type="button" class="btn btn-ghost btn-sm" data-zeit-pause-oeffnen="${g.ids[0]}" style="padding:8px 13px;font-size:15px;opacity:.8">⏸ ${g.pausenMin?g.pausenMin+' Min. Pause':'Pause'}</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-zeit-pause-oeffnen="${g.ids[0]}" style="padding:8px 13px;font-size:15px;opacity:.8">⏸ ${g.pausenMin?fmtDauer(g.pausenMin)+' Pause':'Pause'}</button>
                 ${g.schritt===BAUSTELLE_SCHRITT ? `<button type="button" class="btn btn-ghost btn-sm" data-zeit-km-oeffnen="${g.ids[0]}" style="padding:8px 13px;font-size:15px;opacity:.8">🚐 ${g.km?g.km+' km':'Kilometer'}</button>` : ''}
               </div>
               <input type="text" value="${escapeHtml(g.notizen[0]||'')}" data-zeit-notiz="${g.ids[0]}" placeholder="Notiz hinzufügen (optional)" style="margin:6px 0 0 0;padding:8px 10px;font-size:13px">` : ''}
@@ -1055,7 +1055,7 @@ function renderZeitTab(){
                   <span class="small">–</span>
                   <button type="button" class="btn btn-ghost btn-sm" data-zeit-end-oeffnen="${z.id}" style="padding:8px 13px;font-size:15px">${z.endZeit||'Ende'}</button>
                   ${!z.startZeit ? `<span class="small" style="opacity:.6">← Uhrzeit eintragen</span>` : ''}
-                  <button type="button" class="btn btn-ghost btn-sm" data-zeit-pause-oeffnen="${z.id}" style="padding:8px 13px;font-size:15px;opacity:.8">⏸ ${z.pausenMin?z.pausenMin+' Min. Pause':'Pause'}</button>
+                  <button type="button" class="btn btn-ghost btn-sm" data-zeit-pause-oeffnen="${z.id}" style="padding:8px 13px;font-size:15px;opacity:.8">⏸ ${z.pausenMin?fmtDauer(z.pausenMin)+' Pause':'Pause'}</button>
                   ${z.schritt===BAUSTELLE_SCHRITT ? `<button type="button" class="btn btn-ghost btn-sm" data-zeit-km-oeffnen="${z.id}" style="padding:8px 13px;font-size:15px;opacity:.8">🚐 ${z.km?z.km+' km':'Kilometer'}</button>` : ''}
                 </div>
                 <input type="text" value="${escapeHtml(z.notiz||'')}" data-zeit-notiz="${z.id}" placeholder="Notiz hinzufügen (optional)" style="margin:6px 0 0 0;padding:8px 10px;font-size:13px">
