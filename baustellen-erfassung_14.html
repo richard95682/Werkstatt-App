@@ -531,6 +531,49 @@ async function eingabeDialogOhneVerspringen(optionen){
   setTimeout(()=>window.scrollTo(0, scrollVorher), 150);
   return ergebnis;
 }
+// Eigener Dialog mit zwei Feldern (Std. + Min.) für die Pausenzeit — eingabeDialog unterstützt nur ein
+// einzelnes Feld, für Stunden UND Minuten braucht es aber zwei getrennte Eingaben.
+function pausenDialog(aktuelleMin){
+  const std = Math.floor((aktuelleMin||0)/60), min = Math.round((aktuelleMin||0)%60);
+  return new Promise(resolve=>{
+    const backdrop = document.createElement('div');
+    backdrop.className = 'sheet-backdrop';
+    backdrop.innerHTML = `<div class="sheet">
+      <div class="sheet-handle"></div>
+      <h3>Pausenzeit</h3>
+      <div class="field-row">
+        <div style="flex:0 0 90px"><label>Std.</label><input id="pausen_dialog_std" type="number" min="0" step="1" inputmode="numeric" value="${std}"></div>
+        <div style="flex:0 0 90px"><label>Min.</label><input id="pausen_dialog_min" type="number" min="0" max="59" step="1" inputmode="numeric" value="${min}"></div>
+      </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn" style="flex:1" id="pausen_dialog_abbrechen">Abbrechen</button>
+        <button class="btn primary" style="flex:1" id="pausen_dialog_ok">Speichern</button>
+      </div>
+    </div>`;
+    document.body.appendChild(backdrop);
+    const tastaturAufraeumen = haelteUeberTastatur(backdrop);
+    const stdFeld = backdrop.querySelector('#pausen_dialog_std');
+    const minFeld = backdrop.querySelector('#pausen_dialog_min');
+    stdFeld.focus({preventScroll:true}); stdFeld.select();
+    const schliessen = ergebnis=>{ tastaturAufraeumen(); backdrop.remove(); resolve(ergebnis); };
+    backdrop.addEventListener('click', e=>{ if(e.target===backdrop) schliessen(null); });
+    backdrop.querySelector('#pausen_dialog_abbrechen').addEventListener('click', ()=>schliessen(null));
+    const uebernehmen = ()=>{
+      const gesamtMin = (parseFloat(stdFeld.value)||0)*60 + (parseFloat(minFeld.value)||0);
+      schliessen(gesamtMin);
+    };
+    backdrop.querySelector('#pausen_dialog_ok').addEventListener('click', uebernehmen);
+    [stdFeld, minFeld].forEach(f=>f.addEventListener('keydown', e=>{ if(e.key==='Enter') uebernehmen(); }));
+  });
+}
+async function pausenDialogOhneVerspringen(aktuelleMin){
+  const scrollVorher = window.scrollY;
+  const ergebnis = await pausenDialog(aktuelleMin);
+  window.scrollTo(0, scrollVorher);
+  requestAnimationFrame(()=>window.scrollTo(0, scrollVorher));
+  setTimeout(()=>window.scrollTo(0, scrollVorher), 150);
+  return ergebnis;
+}
 function bestaetigenDialog({titel, text, okText='Ja', abbrechenText='Abbrechen', gefaehrlich=false}){
   return new Promise(resolve=>{
     const backdrop = document.createElement('div');
@@ -1202,9 +1245,9 @@ function bindZeitTab(){
     const id = btn.dataset.zeitPauseOeffnen;
     const z = DB.zeiten.find(x=>x.id===id);
     if(!z) return;
-    const neuerWert = await eingabeDialogOhneVerspringen({titel:'Pausenzeit', label:'Minuten (wird von der Dauer abgezogen)', wert:String(z.pausenMin||0), typ:'number', okText:'Speichern'});
+    const neuerWert = await pausenDialogOhneVerspringen(z.pausenMin||0);
     if(neuerWert===null) return; // abgebrochen
-    const pauseMin = Math.max(0, parseFloat(neuerWert)||0);
+    const pauseMin = Math.max(0, neuerWert);
     await aktualisiereZeitAusUhrzeiten(id, undefined, undefined, pauseMin);
   }));
   document.querySelectorAll('[data-zeit-km-oeffnen]').forEach(btn=>btn.addEventListener('click', async ()=>{
