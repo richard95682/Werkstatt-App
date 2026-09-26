@@ -1089,7 +1089,7 @@ function renderZeitTab(){
             </div>
             ${g.ids.length===1 ? `<div class="del" data-del-zeitgruppe="${g.ids.join(',')}">✕</div>` : `<div class="del" data-del-zeitgruppe="${g.ids.join(',')}" title="Ganzen Tag/Tätigkeit löschen">✕</div>`}
           </div>
-          ${(g.ids.length>1 && istAufgeklappt) ? g.einzelEintraege.map(z=>`
+          ${(g.ids.length>1 && istAufgeklappt) ? g.einzelEintraege.slice().sort((x,y)=>y.id.localeCompare(x.id)).map(z=>`
             <div class="listitem" style="padding-left:44px;background:var(--card-2);border-radius:8px;margin:2px 0">
               <div class="main">
                 <div class="meta">${escapeHtml(z.mitarbeiter)} · ${fmtDauer(z.dauerMin)}</div>
