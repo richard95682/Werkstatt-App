@@ -220,8 +220,8 @@ function cloudSyncKatalogDebounced(){
   if(cloudKatalogSyncTimer) clearTimeout(cloudKatalogSyncTimer);
   cloudKatalogSyncTimer = setTimeout(async ()=>{
     await cloudPfad('katalog').doc('aktuell').set({
-      materialKatalog: DB.materials.map(m=>({name:m.name, m2ProStueck:m.m2ProStueck||0})),
-      beschlagKatalog: DB.beschlaege.map(b=>({name:b.name, einheit:b.einheit||'Stk', kategorie:b.kategorie||'Sonstige'})),
+      materialKatalog: DB.materials.map(m=>({name:m.name, m2ProStueck:m.m2ProStueck||0, preis:m.preis||0})),
+      beschlagKatalog: DB.beschlaege.map(b=>({name:b.name, einheit:b.einheit||'Stk', kategorie:b.kategorie||'Sonstige', preis:b.preis||0})),
       aktualisiertAm: new Date().toISOString()
     });
   }, 1500);
@@ -310,44 +310,78 @@ async function cloudNeuBerechneStundenFuerProjekt(projektId){
   if(!nk){ nk = {projId:projektId, azIst:[]}; DB.nachkalkulation.push(nk); }
   if(!nk.azIst) nk.azIst = [];
   if(!nk._cloudSchatten) nk._cloudSchatten = {az:{}, bm:{std:0,std2:0,km:0}, ob:{std:0,std2:0}};
-  const summeM1 = {}, summeM2 = {};
-  let bmM1=0, bmM2=0, bmKm=0, obM1=0, obM2=0;
+  // Für die informative "Werkstatt-Verlauf"-Anzeige (mit einzelnen Notizen) — komplett unabhängig von der
+  // eigentlichen, delta-basierten Stundenberechnung oben; wird bei jedem Abruf einfach neu aus dem aktuellen
+  // Cloud-Stand aufgebaut (kein Delta nötig, da rein informativ, nicht in irgendeine Berechnung eingerechnet).
+  nk.werkstattVerlauf = zeitenSnap.docs.map(doc=>{
+    const z = doc.data();
+    return {id:doc.id, datum:z.datum, schritt:z.schritt, dauerMin:z.dauerMin||0, mitarbeiter:z.mitarbeiter||'', notiz:z.notiz||''};
+  });
+  const weitereMitarbeiter = (DB.settings.mitarbeiterListe||[]).filter(m=>m.id!=='m1' && m.id!=='m2');
+  // Ordnet einen Namen aus der Werkstatt-App der passenden Mitarbeiter-ID zu ('m2' oder die ID eines weiteren
+  // Mitarbeiters) — alles andere (inkl. unbekannter Namen) fällt weiterhin auf Mitarbeiter 1 zurück, wie bisher.
+  const ordneMitarbeiterZu = name => {
+    if(!name) return 'm1';
+    const n = name.trim().toLowerCase();
+    if(DB.settings.mitarbeiter2Name && n===DB.settings.mitarbeiter2Name.trim().toLowerCase()) return 'm2';
+    const treffer = weitereMitarbeiter.find(m=>m.name && n===m.name.trim().toLowerCase());
+    return treffer ? treffer.id : 'm1';
+  };
+  const summeM1 = {}, summeM2 = {}, summeWeitere = {}; // summeWeitere[schritt][mitarbeiterId] = Stunden
+  let bmM1=0, bmM2=0, bmKm=0;
+  const bmWeitere = {}; // bmWeitere[mitarbeiterId] = Stunden
   zeitenSnap.docs.forEach(doc=>{
     const z = doc.data();
     const stunden = (z.dauerMin||0)/60;
-    const istM2 = z.mitarbeiter && DB.settings.mitarbeiter2Name && z.mitarbeiter.trim().toLowerCase()===DB.settings.mitarbeiter2Name.trim().toLowerCase();
+    const maId = ordneMitarbeiterZu(z.mitarbeiter);
     if(z.schritt==='Baustellenmontage'){
-      if(istM2) bmM2 += stunden; else bmM1 += stunden;
+      if(maId==='m2') bmM2 += stunden;
+      else if(maId==='m1') bmM1 += stunden;
+      else bmWeitere[maId] = (bmWeitere[maId]||0) + stunden;
       bmKm += z.km||0;
-    } else if(z.schritt==='Oberfläche'){
-      if(istM2) obM2 += stunden; else obM1 += stunden;
     } else {
-      const bucket = istM2 ? summeM2 : summeM1;
-      bucket[z.schritt] = (bucket[z.schritt]||0) + stunden;
+      // "Oberfläche" läuft jetzt wie jede normale Position (keine Sonderbehandlung mehr) —
+      // wird über eine eigene Position in der Kalkulation erfasst statt über das separate Feature.
+      if(maId==='m2') summeM2[z.schritt] = (summeM2[z.schritt]||0) + stunden;
+      else if(maId==='m1') summeM1[z.schritt] = (summeM1[z.schritt]||0) + stunden;
+      else {
+        if(!summeWeitere[z.schritt]) summeWeitere[z.schritt] = {};
+        summeWeitere[z.schritt][maId] = (summeWeitere[z.schritt][maId]||0) + stunden;
+      }
     }
   });
-  const alleSchritte = new Set([...Object.keys(summeM1), ...Object.keys(summeM2), ...nk.azIst.map(r=>r.name), ...Object.keys(nk._cloudSchatten.az)]);
+  const alleSchritte = new Set([...Object.keys(summeM1), ...Object.keys(summeM2), ...Object.keys(summeWeitere), ...nk.azIst.map(r=>r.name), ...Object.keys(nk._cloudSchatten.az)]);
   alleSchritte.forEach(schritt=>{
     let pos = nk.azIst.find(r=>r.name===schritt);
     if(!pos){ pos = {name:schritt, std:0, std2:0}; nk.azIst.push(pos); }
-    const altSchatten = nk._cloudSchatten.az[schritt] || {std:0, std2:0};
-    // Auf volle Viertelstunden aufrunden — direkt bei der rohen Cloud-Summe, BEVOR sie für die Differenz
-    // verwendet wird. So bleibt der "Schatten" (letzter bekannter Cloud-Stand) selbst immer bereits gerundet,
-    // wodurch sich das Aufrunden bei wiederholten automatischen Abgleichen NICHT aufsummiert.
-    const neuM1 = Math.ceil((summeM1[schritt]||0)*4)/4, neuM2 = Math.ceil((summeM2[schritt]||0)*4)/4;
+    const altSchatten = nk._cloudSchatten.az[schritt] || {std:0, std2:0, weitere:{}};
+    if(!altSchatten.weitere) altSchatten.weitere = {};
+    const neuM1 = summeM1[schritt]||0, neuM2 = summeM2[schritt]||0;
     pos.std = Math.round(((pos.std||0) + (neuM1 - altSchatten.std))*100)/100;
     pos.std2 = Math.round(((pos.std2||0) + (neuM2 - altSchatten.std2))*100)/100;
-    nk._cloudSchatten.az[schritt] = {std:neuM1, std2:neuM2};
+    const neueWeitereSchatten = {};
+    weitereMitarbeiter.forEach(m=>{
+      const neu = summeWeitere[schritt]?.[m.id] || 0;
+      const alt = altSchatten.weitere[m.id] || 0;
+      if(!pos.weitereStunden) pos.weitereStunden = {};
+      pos.weitereStunden[m.id] = Math.round(((pos.weitereStunden[m.id]||0) + (neu - alt))*100)/100;
+      neueWeitereSchatten[m.id] = neu;
+    });
+    nk._cloudSchatten.az[schritt] = {std:neuM1, std2:neuM2, weitere:neueWeitereSchatten};
   });
-  const bmM1Gerundet = Math.ceil(bmM1*4)/4, bmM2Gerundet = Math.ceil(bmM2*4)/4;
-  const obM1Gerundet = Math.ceil(obM1*4)/4, obM2Gerundet = Math.ceil(obM2*4)/4;
-  nk.baustellenmontageIst = Math.round(((parseFloat(nk.baustellenmontageIst)||0) + (bmM1Gerundet - nk._cloudSchatten.bm.std))*100)/100;
-  nk.baustellenmontageIst2 = Math.round(((parseFloat(nk.baustellenmontageIst2)||0) + (bmM2Gerundet - nk._cloudSchatten.bm.std2))*100)/100;
+  nk.baustellenmontageIst = Math.round(((parseFloat(nk.baustellenmontageIst)||0) + (bmM1 - nk._cloudSchatten.bm.std))*100)/100;
+  nk.baustellenmontageIst2 = Math.round(((parseFloat(nk.baustellenmontageIst2)||0) + (bmM2 - nk._cloudSchatten.bm.std2))*100)/100;
   nk.baustellenmontageKmIst = Math.round((parseFloat(nk.baustellenmontageKmIst)||0) + (bmKm - nk._cloudSchatten.bm.km));
-  nk.oberflaecheIst = Math.round(((parseFloat(nk.oberflaecheIst)||0) + (obM1Gerundet - nk._cloudSchatten.ob.std))*100)/100;
-  nk.oberflaecheIst2 = Math.round(((parseFloat(nk.oberflaecheIst2)||0) + (obM2Gerundet - nk._cloudSchatten.ob.std2))*100)/100;
-  nk._cloudSchatten.bm = {std:bmM1Gerundet, std2:bmM2Gerundet, km:bmKm};
-  nk._cloudSchatten.ob = {std:obM1Gerundet, std2:obM2Gerundet};
+  if(!nk._cloudSchatten.bm.weitere) nk._cloudSchatten.bm.weitere = {};
+  const neueBmWeitereSchatten = {};
+  weitereMitarbeiter.forEach(m=>{
+    const neu = bmWeitere[m.id]||0;
+    const alt = nk._cloudSchatten.bm.weitere[m.id]||0;
+    if(!nk.baustellenmontageIstWeitere) nk.baustellenmontageIstWeitere = {};
+    nk.baustellenmontageIstWeitere[m.id] = Math.round(((nk.baustellenmontageIstWeitere[m.id]||0) + (neu - alt))*100)/100;
+    neueBmWeitereSchatten[m.id] = neu;
+  });
+  nk._cloudSchatten.bm = {std:bmM1, std2:bmM2, km:bmKm, weitere:neueBmWeitereSchatten};
   await save('nachkalkulation');
   if(current==='nachkalkulation') renderMain();
 }
@@ -369,7 +403,9 @@ async function cloudVerarbeiteMaterialEintrag(m){
   } else {
     if(!nk.zusatzpositionenExtra) nk.zusatzpositionenExtra = [];
     const passendesMaterial = DB.materials.find(x=>x.name===m.bezeichnung);
-    const gefundenerPreis = passendesMaterial ? (passendesMaterial.preis||0) : 0;
+    // Vom Handy mitgeschickten Preis bevorzugen (v.a. wichtig bei eigenen/unbekannten Materialien, die
+    // nicht im Katalog stehen) — nur wenn keiner mitkam, aus dem Katalog raten.
+    const gefundenerPreis = (m.preis!==undefined && m.preis!==null) ? m.preis : (passendesMaterial ? (passendesMaterial.preis||0) : 0);
     nk.zusatzpositionenExtra.push({name:`${m.bezeichnung} (Werkstatt)`, menge:m.menge, preis:gefundenerPreis, cloudMaterialId:m.id});
   }
   await save('nachkalkulation'); await save('werkstattImportierteIds');
@@ -392,14 +428,15 @@ async function cloudEntferneMaterialEintrag(materialId){
 }
 async function cloudDatenSichern(){
   if(!cloudVerbunden){ alert('⚠️ Cloud-Sync ist nicht verbunden.'); return; }
-  const [auftraegeSnap, zeitenSnap, materialSnap] = await Promise.all([
-    cloudPfad('auftraege').get(), cloudPfad('zeiten').get(), cloudPfad('material').get()
+  const [auftraegeSnap, zeitenSnap, materialSnap, kantenIstSnap] = await Promise.all([
+    cloudPfad('auftraege').get(), cloudPfad('zeiten').get(), cloudPfad('material').get(), cloudPfad('kantenIst').get()
   ]);
   const payload = {
     typ: 'moebelkalk-cloud-sicherung', version:1, sicherungZeitpunkt: new Date().toISOString(),
     auftraege: auftraegeSnap.docs.map(d=>({id:d.id, ...d.data()})),
     zeiten: zeitenSnap.docs.map(d=>({id:d.id, ...d.data()})),
     material: materialSnap.docs.map(d=>({id:d.id, ...d.data()})),
+    kantenIst: kantenIstSnap.docs.map(d=>({id:d.id, ...d.data()})),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
@@ -484,11 +521,32 @@ async function cloudDatenJetztAbrufen(erzwingen=false){
     nk.zusatzpositionenExtra = nk.zusatzpositionenExtra.filter(pos=>!pos.cloudMaterialId || cloudMaterialIdsAktuell.has(pos.cloudMaterialId));
     geloescht += vorherAnzahl - nk.zusatzpositionenExtra.length;
   });
+  // Fehlende Preise (0 €) automatisch nachtragen — läuft bei JEDEM Abgleich, nicht nur im Reparatur-Modus,
+  // damit ein in der App nachgetragener Preis zeitnah ankommt. Entweder weil in der App inzwischen ein Preis
+  // eingetragen wurde, oder weil inzwischen ein passendes Material/Beschlag im eigenen Katalog existiert.
+  let preiseNachgetragen = 0;
+  {
+    const cloudMaterialListeFuerPreise = materialSnap.docs.map(d=>({id:d.id, ...d.data()}));
+    DB.nachkalkulation.forEach(nk=>{
+      if(!nk.zusatzpositionenExtra) return;
+      nk.zusatzpositionenExtra.forEach(pos=>{
+        if((pos.preis||0)>0 || !pos.name.endsWith(' (Werkstatt)')) return;
+        const ausApp = pos.cloudMaterialId ? cloudMaterialListeFuerPreise.find(m=>m.id===pos.cloudMaterialId) : null;
+        if(ausApp && ausApp.preis!==undefined && ausApp.preis!==null && ausApp.preis>0){
+          pos.preis = ausApp.preis; preiseNachgetragen++; return;
+        }
+        const bezeichnung = pos.name.replace(/ \(Werkstatt\)$/, '');
+        const passendesMaterial = DB.materials.find(x=>x.name===bezeichnung);
+        const passenderBeschlag = DB.beschlaege.find(x=>x.name===bezeichnung);
+        const gefundenerPreis = passendesMaterial ? (passendesMaterial.preis||0) : (passenderBeschlag ? (passenderBeschlag.preis||0) : 0);
+        if(gefundenerPreis>0){ pos.preis = gefundenerPreis; preiseNachgetragen++; }
+      });
+    });
+  }
   // Reparatur-Modus: ältere Zusatzpositionen ohne gespeicherte Cloud-ID (aus der Zeit vor dieser Funktion) nachträglich
   // zuordnen oder — falls in der Cloud kein passender Eintrag mehr existiert (dort schon gelöscht) — jetzt entfernen.
   if(erzwingen){
     const cloudMaterialListe = materialSnap.docs.map(d=>({id:d.id, ...d.data()}));
-    let preiseNachgetragen = 0;
     DB.nachkalkulation.forEach(nk=>{
       if(!nk.zusatzpositionenExtra) return;
       const vorherAnzahl = nk.zusatzpositionenExtra.length;
@@ -500,22 +558,27 @@ async function cloudDatenJetztAbrufen(erzwingen=false){
         return false; // kein passender Cloud-Eintrag mehr vorhanden — wurde vermutlich schon vor der ID-Verknüpfung gelöscht
       });
       geloescht += vorherAnzahl - nk.zusatzpositionenExtra.length;
-      // Fehlende Preise (0 €) nachtragen, wenn inzwischen ein passendes Material/Beschlag im Katalog existiert
-      nk.zusatzpositionenExtra.forEach(pos=>{
-        if((pos.preis||0)>0 || !pos.name.endsWith(' (Werkstatt)')) return;
-        const bezeichnung = pos.name.replace(/ \(Werkstatt\)$/, '');
-        const passendesMaterial = DB.materials.find(x=>x.name===bezeichnung);
-        const passenderBeschlag = DB.beschlaege.find(x=>x.name===bezeichnung);
-        const gefundenerPreis = passendesMaterial ? (passendesMaterial.preis||0) : (passenderBeschlag ? (passenderBeschlag.preis||0) : 0);
-        if(gefundenerPreis>0){ pos.preis = gefundenerPreis; preiseNachgetragen++; }
-      });
     });
-    if(preiseNachgetragen>0) geloescht = Math.max(geloescht,1); // erzwingt das Speichern unten auch, wenn nur Preise nachgetragen wurden
   }
-  if(geloescht>0){ await save('nachkalkulation'); if(current==='nachkalkulation') renderMain(); }
+  if(geloescht>0 || preiseNachgetragen>0){ await save('nachkalkulation'); if(current==='nachkalkulation') renderMain(); }
   for(const doc of kantenIstSnap.docs){
     await cloudVerarbeiteKantenIst(doc.id, doc.data());
   }
+  // Fotos übernehmen und danach aus der Cloud löschen — sie liegen ja jetzt lokal in MöbelKalk und sollen den
+  // (kostenpflichtigen) Cloud-Speicher nicht dauerhaft belegen.
+  let fotosUebernommen = 0;
+  try{
+    const fotosSnap = await cloudPfad('fotos').get();
+    for(const doc of fotosSnap.docs){
+      if(DB.fotos.some(f=>f.id===doc.id)) { await cloudPfad('fotos').doc(doc.id).delete().catch(()=>{}); continue; } // schon vorhanden, trotzdem aus der Cloud aufräumen
+      const daten = doc.data();
+      if(!DB.projects.some(p=>p.id===daten.auftragId)) continue; // Projekt (noch) nicht lokal vorhanden — später erneut versuchen
+      DB.fotos.push({id:doc.id, projId:daten.auftragId, mitarbeiter:daten.mitarbeiter, datum:daten.datum, dataUrl:daten.dataUrl, notiz:daten.notiz||'', quelle:'werkstatt'});
+      fotosUebernommen++;
+      await cloudPfad('fotos').doc(doc.id).delete().catch(err=>console.warn('Cloud-Löschen (Foto nach Übernahme) fehlgeschlagen:', err));
+    }
+    if(fotosUebernommen>0){ await save('fotos'); neu += fotosUebernommen; if(current==='nachkalkulation') renderMain(); }
+  }catch(err){ console.warn('Foto-Abruf fehlgeschlagen:', err); }
   return {neu, uebersprungen, verwaisteAuftraegeEntfernt};
 }
 /* ---------------------------- STORAGE LAYER ---------------------------- */
@@ -547,6 +610,11 @@ const DEFAULTS = {
     mitarbeiter1Monatslohn:0, mitarbeiter1Beginn:'', mitarbeiter2Monatslohn:0, mitarbeiter2Beginn:'',
     mitarbeiter1SollManuell:null, mitarbeiter1IstKorrektur:0, mitarbeiter2SollManuell:null, mitarbeiter2IstKorrektur:0,
     mitarbeiter1MonateManuell:null, mitarbeiter1IstManuell:null, mitarbeiter2MonateManuell:null, mitarbeiter2IstManuell:null,
+    mitarbeiter1BasisStunden:0, mitarbeiter2BasisStunden:0, mitarbeiter1SollMonatManuell:null, mitarbeiter2SollMonatManuell:null,
+    // NEU: flexible Mitarbeiterliste für einen dritten (und weitere) Mitarbeiter — läuft komplett ZUSÄTZLICH
+    // neben Mitarbeiter 1/2, ohne dort etwas zu verändern. Wird beim Laden automatisch aus den bestehenden
+    // mitarbeiter1/2-Feldern befüllt, falls noch leer (siehe migriereZuMitarbeiterListe).
+    mitarbeiterListe: null, // null = noch nicht migriert; danach ein Array [{id, name, satz, stundenlohnTatsaechlich, monatslohn, beginn, basisStunden, sollMonatManuell}, ...]
     beschlagKategorien:['Türen','Fronten','Schubladen','Schränke','Verbinder','Korpus','Sockel','Sonstiges'],
     autoHaken:{scharnier:true, griff:true, auszug:true, bodentraeger:true, sockel:true, kleiderstange:true, kleiderstangenhalter:true},
     fixierteBeschlaege:[],
@@ -627,6 +695,16 @@ async function loadAll(){
   }
   // Migration: ältere gespeicherte Einstellungen um neue Felder ergänzen
   DB.settings = {...DEFAULTS.settings, ...DB.settings, kantenRegeln:{...DEFAULTS.settings.kantenRegeln, ...(DB.settings.kantenRegeln||{})}, autoHaken:{...DEFAULTS.settings.autoHaken, ...(DB.settings.autoHaken||{})}};
+  // Migration: flexible Mitarbeiterliste (für einen 3. und weitere Mitarbeiter) aus den bestehenden
+  // mitarbeiter1/2-Feldern einmalig befüllen — rein additiv, ändert an mitarbeiter1/2 selbst nichts.
+  if(!DB.settings.mitarbeiterListe){
+    const s = DB.settings;
+    DB.settings.mitarbeiterListe = [
+      {id:'m1', name:s.mitarbeiter1Name, satz:s.mitarbeiter1Satz, stundenlohnTatsaechlich:s.mitarbeiter1StundenlohnTatsaechlich||0, monatslohn:s.mitarbeiter1Monatslohn||0, beginn:s.mitarbeiter1Beginn||'', basisStunden:s.mitarbeiter1BasisStunden||0, sollMonatManuell:s.mitarbeiter1SollMonatManuell||null},
+      {id:'m2', name:s.mitarbeiter2Name, satz:s.mitarbeiter2Satz, stundenlohnTatsaechlich:s.mitarbeiter2StundenlohnTatsaechlich||0, monatslohn:s.mitarbeiter2Monatslohn||0, beginn:s.mitarbeiter2Beginn||'', basisStunden:s.mitarbeiter2BasisStunden||0, sollMonatManuell:s.mitarbeiter2SollMonatManuell||null},
+    ];
+    await save('settings');
+  }
   // Migration: "AV je Fach" war früher in Stunden, ist jetzt in Minuten. Alte, noch nicht umgerechnete
   // Werte (typischerweise < 1, da Stunden-Werte für diese Position immer klein waren) einmalig ×60.
   if(!DB.settings._avJeFachUmgerechnet){
@@ -649,7 +727,6 @@ async function loadAll(){
   }
   await bereinigeBaustellenmontageOberflaecheStreuzeilen();
   await bereinigeBeschlaegeInZusatzpositionen();
-  await bereinigeStundenAufViertelstunden();
 }
 // Eigenständige Funktion, damit sie sowohl beim normalen Laden als auch nach einem "Zurücksichern"
 // (das den DB-Stand komplett überschreibt) aufgerufen werden kann.
@@ -694,34 +771,6 @@ async function bereinigeBeschlaegeInZusatzpositionen(){
       return false; // aus Zusatzpositionen entfernen, jetzt in Soll-vs-Ist
     });
     if(nk.zusatzpositionenExtra.length!==vorherAnzahl) geaendert = true;
-  });
-  if(geaendert) await save('nachkalkulation');
-}
-async function bereinigeStundenAufViertelstunden(){
-  // Rundet alle BEREITS gespeicherten Ist-Stunden (aus der Zeit vor Einführung des Aufrundens) nachträglich
-  // einmalig auf volle Viertelstunden auf — läuft danach nicht erneut, da die eigentliche Berechnung
-  // (cloudNeuBerechneStundenFuerProjekt) neue Werte ab jetzt bereits korrekt gerundet liefert.
-  let geaendert = false;
-  const aufrunden = n => { const v = parseFloat(n); return isFinite(v) ? Math.ceil(v*4)/4 : n; };
-  (DB.nachkalkulation||[]).forEach(nk=>{
-    (nk.azIst||[]).forEach(pos=>{
-      const neuStd = aufrunden(pos.std), neuStd2 = aufrunden(pos.std2);
-      if(neuStd!==pos.std){ pos.std = neuStd; geaendert = true; }
-      if(neuStd2!==pos.std2){ pos.std2 = neuStd2; geaendert = true; }
-    });
-    ['baustellenmontageIst','baustellenmontageIst2','oberflaecheIst','oberflaecheIst2'].forEach(feld=>{
-      if(nk[feld]===undefined || nk[feld]===null || nk[feld]==='') return;
-      const neu = aufrunden(nk[feld]);
-      if(neu!==parseFloat(nk[feld])){ nk[feld] = neu; geaendert = true; }
-    });
-    if(nk._cloudSchatten){
-      Object.keys(nk._cloudSchatten.az||{}).forEach(schritt=>{
-        const s = nk._cloudSchatten.az[schritt];
-        s.std = aufrunden(s.std); s.std2 = aufrunden(s.std2);
-      });
-      if(nk._cloudSchatten.bm){ nk._cloudSchatten.bm.std = aufrunden(nk._cloudSchatten.bm.std); nk._cloudSchatten.bm.std2 = aufrunden(nk._cloudSchatten.bm.std2); }
-      if(nk._cloudSchatten.ob){ nk._cloudSchatten.ob.std = aufrunden(nk._cloudSchatten.ob.std); nk._cloudSchatten.ob.std2 = aufrunden(nk._cloudSchatten.ob.std2); }
-    }
   });
   if(geaendert) await save('nachkalkulation');
 }
@@ -835,7 +884,6 @@ async function importSicherungAusDatei(file){
     for(const key of Object.keys(DEFAULTS)){ if(data[key]!==undefined){ DB[key]=data[key]; await save(key); } }
     await bereinigeBaustellenmontageOberflaecheStreuzeilen();
     await bereinigeBeschlaegeInZusatzpositionen();
-    await bereinigeStundenAufViertelstunden();
     await bereinigeVerwaisteCloudAuftraege();
     alert('Sicherung importiert.'); renderMain();
   }catch(err){ alert('Ungültige Datei.'); }
@@ -843,12 +891,15 @@ async function importSicherungAusDatei(file){
 async function bereinigeVerwaisteCloudAuftraege(){
   // Nach einem "Zurücksichern" (Projektliste wird komplett ersetzt) können Aufträge in der Cloud übrig bleiben,
   // die in der wiederhergestellten Projektliste nicht mehr vorkommen — hier automatisch bereinigen.
+  // Zusätzlich: Projekte, die schon VOR Einführung der automatischen Lösch-Synchronisierung auf "abgeschlossen"
+  // gesetzt wurden, hatten dadurch nie einen entsprechenden Cloud-Löschvorgang — das hier rückwirkend nachholen.
   if(!cloudVerbunden) return;
   try{
     const auftraegeSnap = await cloudPfad('auftraege').get();
-    const aktuelleIds = new Set(DB.projects.map(p=>p.id));
+    const projektMap = new Map(DB.projects.map(p=>[p.id, p]));
     for(const doc of auftraegeSnap.docs){
-      if(!aktuelleIds.has(doc.id)) await cloudPfad('auftraege').doc(doc.id).delete();
+      const projekt = projektMap.get(doc.id);
+      if(!projekt || projekt.status==='abgeschlossen') await cloudPfad('auftraege').doc(doc.id).delete();
     }
   }catch(err){ console.warn('Bereinigung verwaister Cloud-Aufträge fehlgeschlagen:', err); }
 }
@@ -905,6 +956,7 @@ let activeSchrankIndex = 0; // welcher Schrank innerhalb des Projekts gerade bea
 let arbeitszeitMitarbeiterFilter = 'alle'; // Filter für die Mitarbeiter-Projekt-Übersicht auf der Arbeitszeit-Seite
 let arbeitszeitSortSpalte = 'datum'; // Sortierspalte der Mitarbeiter-Projekt-Übersicht: datum | kunde | projekt | stunden
 let arbeitszeitSortRichtung = 'ab'; // 'auf' oder 'ab'
+let nkZusammenfassungAuswahl = new Set(); // Projekt-IDs, die für die druckbare NK-Zusammenfassung ausgewählt sind
 
 function renderSidebarProjektAuswahl(){
   const host = document.getElementById('sidebarProjektAuswahl');
@@ -980,6 +1032,11 @@ function goto(view){
 
 /* ---------------------------- HELPERS ---------------------------- */
 function fmtEUR(n){ return (n!==null && n!==undefined && isFinite(n)?n:0).toLocaleString('de-DE',{style:'currency',currency:'EUR'}); }
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str==null ? '' : String(str);
+  return div.innerHTML;
+}
 function fmtM2(n){ return (n!==null && n!==undefined && isFinite(n)?n:0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' m²'; }
 function statusChip(s){ const map={Anfrage:'anfrage',Kalkulation:'kalkulation',Angebot:'angebot',Auftrag:'auftrag',Fertigung:'fertigung',Fertig:'fertig',abgeschlossen:'abgeschlossen'}; return `<span class="chip chip-${map[s]||'anfrage'}">${s}</span>`; }
 function findMat(id){ return DB.materials.find(m=>m.id===id); }
@@ -1013,7 +1070,7 @@ function baueGeplantSnapshot(state, r){
     puVerleimung: !!state.puVerleimung, puVerleimungKosten: r.puVerleimungKosten||0,
     beschlagQtySnapshot: r.beschlagQtySnapshot, beschlagPreisSnapshot: r.beschlagPreisSnapshot, zusatzKosten: r.zusatzKosten,
     zusatzpositionenSnapshot: r.zusatzpositionenSnapshot,
-    azBreakdown: r.azBreakdown, azBreakdownM1: r.azBreakdownM1, azBreakdownM2: r.azBreakdownM2, baustellenmontageStd: r.baustellenmontageStd,
+    azBreakdown: r.azBreakdown, azBreakdownM1: r.azBreakdownM1, azBreakdownM2: r.azBreakdownM2, azBreakdownWeitere: r.azBreakdownWeitere, baustellenmontageStd: r.baustellenmontageStd,
     baustellenmontageStdM1: r.baustellenmontageStdM1, baustellenmontageStdM2: r.baustellenmontageStdM2,
     oberflaecheStd: r.oberflaecheStd, oberflaecheStdM1: r.oberflaecheStdM1, oberflaecheStdM2: r.oberflaecheStdM2,
     lieferkostenBetrag: r.lieferkostenBetrag, kleinmaterialBetrag: r.kleinmaterialBetrag,
@@ -1327,6 +1384,11 @@ function projekteSortiertNachZuletztBearbeitet(){
 function bindeProjektTabelle(el){
   el.querySelectorAll('[data-open-project]').forEach(b=>b.addEventListener('click',()=>{ activeProjectId=b.dataset.openProject; goto('kalkulation'); }));
   el.querySelectorAll('[data-edit-project]').forEach(b=>b.addEventListener('click',()=>openProjectForm(b.dataset.editProject)));
+  el.querySelectorAll('[data-nk-zsf-check]').forEach(cb=>cb.addEventListener('change', e=>{
+    const id = e.target.dataset.nkZsfCheck;
+    if(e.target.checked) nkZusammenfassungAuswahl.add(id); else nkZusammenfassungAuswahl.delete(id);
+    aktualisiereNkZsfLeiste(el);
+  }));
   el.querySelectorAll('[data-status-projekt]').forEach(sel=>sel.addEventListener('change', async e=>{
     const projId = e.target.dataset.statusProjekt;
     const p = DB.projects.find(x=>x.id===projId);
@@ -1343,13 +1405,14 @@ function bindeProjektTabelle(el){
 }
 function tableProjects(list){
   const alleStatus = ['Kalkulation','Fertigung','Fertig','abgeschlossen'];
-  return `<table><thead><tr><th>Kunde</th><th>Projekt</th><th>Datum</th><th>Status</th><th>VK</th><th>NK</th><th>Version</th><th></th></tr></thead><tbody>
+  return `<table><thead><tr><th></th><th>Kunde</th><th>Projekt</th><th>Datum</th><th>Status</th><th>VK</th><th>NK</th><th>Version</th><th></th></tr></thead><tbody>
     ${list.map(p=>{
       const geplant = projektGeplantGesamt(p);
       const hatKalkulation = (p.kalkulation?.schraenke||[]).some(s=>s.geplant);
       const nkPreis = hatKalkulation ? berechneNkVerkaufspreis(p) : null;
       const hatNk = DB.nachkalkulation.some(x=>x.projId===p.id);
       return `<tr>
+      <td><input type="checkbox" data-nk-zsf-check="${p.id}" ${nkZusammenfassungAuswahl.has(p.id)?'checked':''} ${!hatKalkulation?'disabled':''} title="${hatKalkulation?'Für NK-Zusammenfassung auswählen':'Noch keine Kalkulation gespeichert'}"></td>
       <td>${p.kunde||'—'}</td><td><a class="linklike" data-open-project="${p.id}">${p.name}</a></td>
       <td class="mono">${p.datum||'—'}</td>
       <td><select class="status-inline chip chip-${(({Anfrage:'anfrage',Kalkulation:'kalkulation',Angebot:'angebot',Auftrag:'auftrag',Fertigung:'fertigung',Fertig:'fertig',abgeschlossen:'abgeschlossen'})[p.status])||'anfrage'}" data-status-projekt="${p.id}" style="border:none;font:inherit;cursor:pointer;width:auto;min-width:110px">
@@ -1363,6 +1426,112 @@ function tableProjects(list){
   </tbody></table>`;
 }
 function emptyState(ico,title,text){ return `<div class="empty"><div class="ico">${ico}</div><b>${title}</b><div class="small">${text}</div></div>`; }
+
+/* ------------------- NK-Zusammenfassung (mehrere Projekte) ------------------- */
+function aktualisiereNkZsfLeiste(el){
+  const host = el.querySelector('#nkZsfLeiste');
+  if(!host) return;
+  const anzahl = nkZusammenfassungAuswahl.size;
+  if(!anzahl){ host.innerHTML = ''; return; }
+  host.innerHTML = `<div class="hint" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;background:var(--accent-10,rgba(0,0,0,.04))">
+    <span>📊 <b>${anzahl}</b> Projekt${anzahl===1?'':'e'} für Nachkalkulation-Zusammenfassung ausgewählt</span>
+    <button class="btn btn-primary btn-sm" id="btnNkZsfOeffnen">Zusammenfassung erstellen</button>
+    <button class="btn btn-ghost btn-sm" id="btnNkZsfLeeren">Auswahl aufheben</button>
+  </div>`;
+  host.querySelector('#btnNkZsfOeffnen').addEventListener('click', ()=>oeffneNkZusammenfassung());
+  host.querySelector('#btnNkZsfLeeren').addEventListener('click', ()=>{
+    nkZusammenfassungAuswahl.clear();
+    renderMain();
+  });
+}
+function oeffneNkZusammenfassung(){
+  const projekte = DB.projects.filter(p=>nkZusammenfassungAuswahl.has(p.id));
+  if(!projekte.length){ alert('Bitte mindestens ein Projekt auswählen.'); return; }
+  const zeilen = projekte.map(p=>{
+    const k = berechneNkKennzahlenVoll(p);
+    const diffPreis = k.verkaufspreisIst - k.verkaufspreisSoll;
+    // Bei einem sehr niedrigen Soll-Preis (meist eine unvollständig gespeicherte Kalkulation ohne Material/Maße)
+    // wird die Prozentzahl sinnlos groß — dann lieber als Hinweis markieren statt eine irreführende Zahl zeigen.
+    const sollUnplausibel = k.verkaufspreisSoll < 10;
+    const diffPreisProzent = (k.verkaufspreisSoll && !sollUnplausibel) ? (diffPreis/k.verkaufspreisSoll*100) : null;
+    const diffMaterial = k.materialIst - k.materialSoll;
+    const diffZeit = k.zeitIst - k.zeitSoll;
+    return { p, k, diffPreis, diffPreisProzent, diffMaterial, diffZeit, sollUnplausibel };
+  });
+  const summe = (feld) => zeilen.reduce((s,z)=>s + (typeof feld==='function' ? feld(z) : z[feld]), 0);
+  const gesamtPreisSoll = summe(z=>z.k.verkaufspreisSoll);
+  const gesamtPreisIst = summe(z=>z.k.verkaufspreisIst);
+  const gesamtGewinnIst = summe(z=>z.k.gewinnIst);
+  const gesamtMargeIst = gesamtPreisIst ? (gesamtGewinnIst/gesamtPreisIst*100) : 0;
+  const heute = new Date().toLocaleDateString('de-DE');
+  const vzKlasse = n => n>0 ? 'zsf-neg' : (n<0 ? 'zsf-pos' : ''); // bei Preis/Zeit ist ein Plus (über Plan) ungünstig -> rot
+  const html = `<!doctype html><html lang="de"><head><meta charset="utf-8">
+    <title>Nachkalkulation – Zusammenfassung</title>
+    <style>
+      body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#2b2013;margin:24px;font-size:13px}
+      h1{font-size:18px;margin:0 0 4px 0}
+      .sub{color:#6b5c47;margin:0 0 18px 0;font-size:12px}
+      table{width:100%;border-collapse:collapse}
+      th,td{padding:6px 8px;text-align:right;border-bottom:1px solid #e6ddd0;white-space:nowrap}
+      th:first-child,td:first-child, th:nth-child(2),td:nth-child(2){text-align:left}
+      thead th{background:#f5efe4;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.02em}
+      tbody tr:nth-child(even){background:#faf7f0}
+      tfoot td{font-weight:700;border-top:2px solid #2b2013;border-bottom:none}
+      .zsf-pos{color:#2f7d32}
+      .zsf-neg{color:#c0392b}
+      .mono{font-family:ui-monospace,Consolas,monospace}
+      .noprint{margin-top:20px}
+      @media print{ .noprint{display:none} body{margin:8mm} }
+      button{font:inherit;padding:8px 16px;border-radius:6px;border:1px solid #2b2013;background:#2b2013;color:#fff;cursor:pointer}
+    </style></head><body>
+    <h1>📊 Nachkalkulation – Zusammenfassung</h1>
+    <p class="sub">${projekte.length} Projekt${projekte.length===1?'':'e'} · erstellt am ${heute}</p>
+    <table>
+      <thead><tr>
+        <th>Kunde</th><th>Projekt</th>
+        <th>Preis Soll</th><th>Preis Ist</th><th>Diff. €</th><th>Diff. %</th>
+        <th>Zeit Soll</th><th>Zeit Ist</th><th>Diff. Zeit</th>
+        <th>davon Baustelle Soll</th><th>davon Baustelle Ist</th>
+        <th>Material Soll</th><th>Material Ist</th><th>Diff. Material</th>
+        <th>Gewinn Ist</th><th>Marge Ist</th>
+      </tr></thead>
+      <tbody>
+        ${zeilen.map(z=>`<tr>
+          <td>${escapeHtml(z.p.kunde||'—')}</td><td>${escapeHtml(z.p.name)}${z.sollUnplausibel?' <span title="Soll-Preis wirkt unvollständig — Kalkulation prüfen" style="color:#c0392b">⚠️</span>':''}</td>
+          <td class="mono">${fmtEUR(z.k.verkaufspreisSoll)}</td>
+          <td class="mono">${fmtEUR(z.k.verkaufspreisIst)}</td>
+          <td class="mono ${vzKlasse(z.diffPreis)}">${z.diffPreis>=0?'+':''}${fmtEUR(z.diffPreis)}</td>
+          <td class="mono ${z.diffPreisProzent===null?'':vzKlasse(z.diffPreis)}">${z.diffPreisProzent===null?'Kalkulation prüfen':(z.diffPreisProzent>=0?'+':'')+z.diffPreisProzent.toFixed(1)+' %'}</td>
+          <td class="mono">${z.k.zeitSoll.toFixed(2)} Std.</td>
+          <td class="mono">${z.k.zeitIst.toFixed(2)} Std.</td>
+          <td class="mono ${vzKlasse(z.diffZeit)}">${z.diffZeit>=0?'+':''}${z.diffZeit.toFixed(2)} Std.</td>
+          <td class="mono">${z.k.bmZeitSoll.toFixed(2)} Std.</td>
+          <td class="mono">${z.k.bmZeitIst.toFixed(2)} Std.</td>
+          <td class="mono">${fmtEUR(z.k.materialSoll)}</td>
+          <td class="mono">${fmtEUR(z.k.materialIst)}</td>
+          <td class="mono ${vzKlasse(z.diffMaterial)}">${z.diffMaterial>=0?'+':''}${fmtEUR(z.diffMaterial)}</td>
+          <td class="mono">${fmtEUR(z.k.gewinnIst)}</td>
+          <td class="mono">${z.k.margeIstProzent.toFixed(1)} %</td>
+        </tr>`).join('')}
+      </tbody>
+      <tfoot><tr>
+        <td colspan="2">Gesamt</td>
+        <td class="mono">${fmtEUR(gesamtPreisSoll)}</td>
+        <td class="mono">${fmtEUR(gesamtPreisIst)}</td>
+        <td class="mono ${vzKlasse(gesamtPreisIst-gesamtPreisSoll)}" colspan="2">${fmtEUR(gesamtPreisIst-gesamtPreisSoll)}</td>
+        <td colspan="5"></td>
+        <td colspan="3"></td>
+        <td class="mono">${fmtEUR(gesamtGewinnIst)}</td>
+        <td class="mono">${gesamtMargeIst.toFixed(1)} %</td>
+      </tr></tfoot>
+    </table>
+    <div class="noprint"><button onclick="window.print()">🖨️ Drucken / Als PDF speichern</button></div>
+  </body></html>`;
+  const fenster = window.open('', '_blank');
+  if(!fenster){ alert('Das Fenster für die Zusammenfassung wurde vom Browser blockiert. Bitte Pop-ups für diese Seite erlauben.'); return; }
+  fenster.document.write(html);
+  fenster.document.close();
+}
 
 function renderProjekte(el){
   const byStatus = {};
@@ -1385,9 +1554,11 @@ function renderProjekte(el){
     <div id="cloudDiagnoseHost"></div>
     <div id="werkstattImportStatus">${letzterWerkstattImportHinweis}</div>
     ${DB.projects.length ? `<input id="projSuche" placeholder="🔍 Nach Kunde oder Projektname suchen …" style="margin-bottom:12px">` : ''}
+    <div id="nkZsfLeiste"></div>
     <div id="projTabelleHost" class="card">${DB.projects.length ? tableProjects(projekteSortiertNachZuletztBearbeitet()) : emptyState('📁','Noch keine Projekte','Lege dein erstes Projekt an.')}</div>`;
   el.querySelector('#btnNewProj').addEventListener('click',()=>openProjectForm());
   bindeProjektTabelle(el);
+  aktualisiereNkZsfLeiste(el);
   el.querySelector('#projSuche')?.addEventListener('input', e=>{
     const f = e.target.value.trim().toLowerCase();
     const treffer = projekteSortiertNachZuletztBearbeitet().filter(p=>!f || p.name.toLowerCase().includes(f) || (p.kunde||'').toLowerCase().includes(f));
@@ -1499,8 +1670,8 @@ function exportiereProjektlisteFuerWerkstatt(){
     typ: 'moebelkalk-projektliste',
     version: 1,
     exportZeitpunkt: new Date().toISOString(),
-    materialKatalog: DB.materials.map(m=>({name:m.name, m2ProStueck:m.m2ProStueck||0})),
-    beschlagKatalog: DB.beschlaege.map(b=>({name:b.name, einheit:b.einheit||'Stk', kategorie:b.kategorie||'Sonstige'})),
+    materialKatalog: DB.materials.map(m=>({name:m.name, m2ProStueck:m.m2ProStueck||0, preis:m.preis||0})),
+    beschlagKatalog: DB.beschlaege.map(b=>({name:b.name, einheit:b.einheit||'Stk', kategorie:b.kategorie||'Sonstige', preis:b.preis||0})),
     projekte: laufendeProjekte.map(p=>{
       const geplant = projektGeplantGesamt(p);
       const matIds = new Set();
@@ -1549,21 +1720,27 @@ async function importiereWerkstattDaten(file, statusEl){
       let nk = DB.nachkalkulation.find(x=>x.projId===projekt.id);
       if(!nk){ nk = {projId:projekt.id, azIst:[]}; DB.nachkalkulation.push(nk); }
       if(!nk.azIst) nk.azIst = [];
-      // Mitarbeiter anhand des Namens zuordnen (Mitarbeiter 1 vs. 2) — bei fehlender/unbekannter Zuordnung als Mitarbeiter 1 verbucht
+      // Mitarbeiter anhand des Namens zuordnen (Mitarbeiter 1/2 oder weiterer Mitarbeiter) — bei fehlender/unbekannter Zuordnung als Mitarbeiter 1 verbucht
       const istMitarbeiter2 = z.mitarbeiter && DB.settings.mitarbeiter2Name && z.mitarbeiter.trim().toLowerCase()===DB.settings.mitarbeiter2Name.trim().toLowerCase();
+      const weitererTreffer = !istMitarbeiter2 && z.mitarbeiter ? (DB.settings.mitarbeiterListe||[]).find(m=>m.id!=='m1' && m.id!=='m2' && m.name && z.mitarbeiter.trim().toLowerCase()===m.name.trim().toLowerCase()) : null;
       const stunden = z.dauerMin/60;
       if(z.schritt==='Baustellenmontage'){
         // Baustellenmontage hat eigene Felder für Stunden je Mitarbeiter + Kilometer, statt in die allgemeine Liste zu wandern
         if(istMitarbeiter2) nk.baustellenmontageIst2 = Math.round(((parseFloat(nk.baustellenmontageIst2)||0) + stunden)*4)/4;
+        else if(weitererTreffer){
+          if(!nk.baustellenmontageIstWeitere) nk.baustellenmontageIstWeitere = {};
+          nk.baustellenmontageIstWeitere[weitererTreffer.id] = Math.round(((nk.baustellenmontageIstWeitere[weitererTreffer.id]||0) + stunden)*4)/4;
+        }
         else nk.baustellenmontageIst = Math.round(((parseFloat(nk.baustellenmontageIst)||0) + stunden)*4)/4;
         if(z.km) nk.baustellenmontageKmIst = Math.round((parseFloat(nk.baustellenmontageKmIst)||0) + z.km);
-      } else if(z.schritt==='Oberfläche'){
-        if(istMitarbeiter2) nk.oberflaecheIst2 = Math.round(((parseFloat(nk.oberflaecheIst2)||0) + stunden)*4)/4;
-        else nk.oberflaecheIst = Math.round(((parseFloat(nk.oberflaecheIst)||0) + stunden)*4)/4;
       } else {
         let pos = nk.azIst.find(r=>r.name===z.schritt);
         if(!pos){ pos = {name:z.schritt, std:0, std2:0}; nk.azIst.push(pos); }
         if(istMitarbeiter2) pos.std2 = Math.round(((pos.std2||0) + stunden)*4)/4;
+        else if(weitererTreffer){
+          if(!pos.weitereStunden) pos.weitereStunden = {};
+          pos.weitereStunden[weitererTreffer.id] = Math.round(((pos.weitereStunden[weitererTreffer.id]||0) + stunden)*4)/4;
+        }
         else pos.std = Math.round(((pos.std||0) + stunden)*4)/4;
       }
       zeitenUebernommen++;
@@ -1579,7 +1756,8 @@ async function importiereWerkstattDaten(file, statusEl){
       let nk = DB.nachkalkulation.find(x=>x.projId===projekt.id);
       if(!nk){ nk = {projId:projekt.id}; DB.nachkalkulation.push(nk); }
       if(!nk.zusatzpositionenExtra) nk.zusatzpositionenExtra = [];
-      nk.zusatzpositionenExtra.push({name:`${m.bezeichnung} (Werkstatt)`, menge:m.menge, preis:0});
+      const gefundenerPreis = (m.preis!==undefined && m.preis!==null) ? m.preis : 0;
+      nk.zusatzpositionenExtra.push({name:`${m.bezeichnung} (Werkstatt)`, menge:m.menge, preis:gefundenerPreis});
       materialUebernommen++;
       neuImportierteIds.push(m.id);
       const batch = holeBatch(projekt.id);
@@ -1668,6 +1846,7 @@ function openProjectForm(id){
   if(p) document.getElementById('f_del').addEventListener('click', async ()=>{
     if(confirm('Projekt wirklich löschen?')){
       DB.projects = DB.projects.filter(x=>x.id!==p.id);
+      nkZusammenfassungAuswahl.delete(p.id);
       await save('projects');
       if(cloudVerbunden) cloudPfad('auftraege').doc(p.id).delete().catch(err=>console.warn('Cloud-Löschen (Auftrag) fehlgeschlagen:', err));
       renderMain();
@@ -1878,20 +2057,6 @@ function renderKalkulation(el){
         <button class="btn btn-primary btn-sm" id="az_vorschlag">🧮 Stunden automatisch vorschlagen</button>
       </div>
       <div class="small" style="margin-top:6px">Grobe Richtwerte (kalibrierbar unter „Einstellungen“ bzw. über „Nachkalkulation“).</div>
-      <div class="checkline" style="margin-top:10px;border-top:1px dashed var(--border);padding-top:10px">
-        <input type="checkbox" id="ob_aktiv" ${k.oberflaeche?.aktiv?'checked':''}>
-        <span>🎨 Oberfläche (Lackieren/Beschichten, extra)</span>
-      </div>
-      <div class="checkline" style="padding-left:24px">
-        <span class="small" style="width:110px">👷 ${DB.settings.mitarbeiter1Name}</span>
-        <input type="number" step="0.25" min="0" style="width:75px;margin-left:auto" id="ob_std" value="${k.oberflaeche?.std||0}" ${k.oberflaeche?.aktiv?'':'disabled'}>
-        <span class="small">Std.</span>
-      </div>
-      <div class="checkline" style="padding-left:24px">
-        <span class="small" style="width:110px">👷 ${DB.settings.mitarbeiter2Name}</span>
-        <input type="number" step="0.25" min="0" style="width:75px;margin-left:auto" id="ob_std2" value="${k.oberflaeche?.std2||0}" ${k.oberflaeche?.aktiv?'':'disabled'}>
-        <span class="small">Std.</span>
-      </div>
       <div class="checkline" style="border-top:1px dashed var(--border);padding-top:10px">
         <input type="checkbox" id="bm_aktiv" ${k.baustellenmontage?.aktiv?'checked':''}>
         <span>🚚 Baustellenmontage (extra, eigener Stundensatz)</span>
@@ -1906,6 +2071,12 @@ function renderKalkulation(el){
         <input type="number" step="0.25" min="0" style="width:75px;margin-left:auto" id="bm_std2" value="${k.baustellenmontage?.std2||0}" ${k.baustellenmontage?.aktiv?'':'disabled'}>
         <span class="small">Std.</span>
       </div>
+      ${(DB.settings.mitarbeiterListe||[]).filter(m=>m.id!=='m1' && m.id!=='m2').map(m=>`
+      <div class="checkline" style="padding-left:24px">
+        <span class="small" style="width:110px">👷 ${m.name}</span>
+        <input type="number" step="0.25" min="0" style="width:75px;margin-left:auto" data-bm-weiter-ma="${m.id}" value="${k.baustellenmontage?.weitereStunden?.[m.id]||0}" ${k.baustellenmontage?.aktiv?'':'disabled'}>
+        <span class="small">Std.</span>
+      </div>`).join('')}
       <div class="checkline" style="padding-left:24px">
         <span class="small">🚐 Kilometerpauschale (Bus)</span>
         <input type="number" step="1" min="0" style="width:70px;margin-left:auto" id="bm_km" value="${k.baustellenmontage?.km||0}" ${k.baustellenmontage?.aktiv?'':'disabled'}>
@@ -2113,7 +2284,6 @@ function renderKalkulation(el){
       ${azNamen.map(name=>`
         <div class="checkline"><span>${name}</span><input type="number" step="0.1" min="0" data-pgaz="${name}" value="${azSumme(name).toFixed(2)}" style="width:90px;margin-left:auto"><span class="small">Std.</span></div>
       `).join('')}
-      <div class="checkline"><span>🎨 Oberfläche</span><input type="number" step="0.1" min="0" id="projektOberflaeche" value="${obSumme.toFixed(2)}" style="width:90px;margin-left:auto"><span class="small">Std.</span></div>
       <div class="checkline"><span>🚚 Baustellenmontage</span><input type="number" step="0.1" min="0" id="projektBaustelle" value="${bmSumme.toFixed(2)}" style="width:90px;margin-left:auto"><span class="small">Std.</span></div>
 
       <div class="checkline" style="border-top:2px solid var(--border);margin-top:10px;padding-top:10px">
@@ -2139,16 +2309,6 @@ function renderKalkulation(el){
       }
       await save('projects'); renderMain();
     }));
-    el.querySelector('#projektOberflaeche').addEventListener('change', async e=>{
-      const neuerWert = parseFloat(e.target.value)||0;
-      const betroffen = schraenke.filter(s=>s.oberflaeche?.aktiv);
-      if(betroffen.length){
-        const totalWerte = betroffen.map(s=>(s.oberflaeche.std||0)*Math.max(0, s.stueckzahl??1));
-        const neuTotal = verteileViertelstunden(totalWerte, neuerWert);
-        betroffen.forEach((s,i)=>{ s.oberflaeche.std = rundeViertelstunde(neuTotal[i]/Math.max(0, s.stueckzahl??1)); });
-      }
-      await save('projects'); renderMain();
-    });
     el.querySelector('#projektBaustelle').addEventListener('change', async e=>{
       const neuerWert = parseFloat(e.target.value)||0;
       const betroffen = schraenke.filter(s=>s.baustellenmontage?.aktiv);
@@ -2233,10 +2393,12 @@ function renderKalkulation(el){
   // Arbeitszeit: frei sortierbare Positionsliste (Name + Stunden je Mitarbeiter), Positionen einfüg-, lösch- und verschiebbar
   function renderArbeitszeitListe(){
     const host = el.querySelector('#azList');
-    const gesamt = state.az.reduce((s,p)=>s+(p.std||0)+(p.std2||0),0);
+    const weitereMitarbeiter = (DB.settings.mitarbeiterListe||[]).filter(m=>m.id!=='m1' && m.id!=='m2');
+    const gesamt = state.az.reduce((s,p)=>s+(p.std||0)+(p.std2||0)+Object.values(p.weitereStunden||{}).reduce((a,b)=>a+(b||0),0),0);
     const s2 = DB.settings;
     host.innerHTML = state.az.map((pos,i)=>{
-      const kosten = (pos.std||0)*s2.mitarbeiter1Satz + (pos.std2||0)*s2.mitarbeiter2Satz;
+      const kostenWeitere = weitereMitarbeiter.reduce((s,m)=>s+((pos.weitereStunden?.[m.id]||0)*(m.satz||0)),0);
+      const kosten = (pos.std||0)*s2.mitarbeiter1Satz + (pos.std2||0)*s2.mitarbeiter2Satz + kostenWeitere;
       return `
       <div class="checkline" style="flex-wrap:wrap;row-gap:6px">
         <span class="mono small" style="width:20px">${i+1}.</span>
@@ -2254,6 +2416,11 @@ function renderKalkulation(el){
         <span class="small" style="width:110px;margin-left:24px">👷 ${s2.mitarbeiter2Name}</span>
         <input type="number" step="0.25" min="0" style="width:75px" value="${pos.std2||0}" data-az-std2="${i}">
         <span class="small">Std.</span>
+        ${weitereMitarbeiter.map(m=>`
+        <span style="flex-basis:100%"></span>
+        <span class="small" style="width:110px;margin-left:24px">👷 ${m.name}</span>
+        <input type="number" step="0.25" min="0" style="width:75px" value="${pos.weitereStunden?.[m.id]||0}" data-az-weiter="${i}" data-az-weiter-ma="${m.id}">
+        <span class="small">Std.</span>`).join('')}
         <span class="small mono" style="margin-left:auto" data-az-kosten="${i}">= ${fmtEUR(kosten)}</span>
       </div>`;}).join('')
       + `<div class="checkline" style="border-top:2px solid var(--border);margin-top:6px;padding-top:8px">
@@ -2265,9 +2432,22 @@ function renderKalkulation(el){
     host.querySelectorAll('[data-az-name]').forEach(inp=>inp.addEventListener('input',e=>{
       state.az[+e.target.dataset.azName].name = e.target.value; updateResults();
     }));
+    host.querySelectorAll('[data-az-weiter]').forEach(inp=>inp.addEventListener('input',e=>{
+      const i = +e.target.dataset.azWeiter, maId = e.target.dataset.azWeiterMa;
+      if(!state.az[i].weitereStunden) state.az[i].weitereStunden = {};
+      state.az[i].weitereStunden[maId] = parseFloat(e.target.value)||0;
+      updateResults();
+      const kEl = host.querySelector(`[data-az-kosten="${i}"]`);
+      if(kEl){
+        const pos = state.az[i];
+        const kostenWeitere = weitereMitarbeiter.reduce((s,m)=>s+((pos.weitereStunden?.[m.id]||0)*(m.satz||0)),0);
+        kEl.textContent = `= ${fmtEUR((pos.std||0)*s2.mitarbeiter1Satz + (pos.std2||0)*s2.mitarbeiter2Satz + kostenWeitere)}`;
+      }
+      aktualisiereAzGesamtfeld();
+    }));
     function aktualisiereAzGesamtfeld(){
       const gEl = host.querySelector('#az_gesamt');
-      if(gEl && document.activeElement!==gEl) gEl.value = rundeViertelstunde(state.az.reduce((s,p)=>s+(p.std||0)+(p.std2||0),0));
+      if(gEl && document.activeElement!==gEl) gEl.value = rundeViertelstunde(state.az.reduce((s,p)=>s+(p.std||0)+(p.std2||0)+Object.values(p.weitereStunden||{}).reduce((a,b)=>a+(b||0),0),0));
     }
     function aktualisiereAzZeilenKosten(i){
       const kEl = host.querySelector(`[data-az-kosten="${i}"]`);
@@ -2516,33 +2696,12 @@ function renderKalkulation(el){
     renderArbeitszeitListe(); updateResults();
     alert('Stundenvorschlag eingefügt:\n' + geaendert.join('\n') + `\nBaustellenmontage (Vorschlag, nicht aktiviert): ${bmVorschlag} Std.`);
   });
-  el.querySelector('#ob_aktiv').addEventListener('change',e=>{
-    state.oberflaeche.aktiv = e.target.checked;
-    el.querySelector('#ob_std').disabled = !e.target.checked;
-    el.querySelector('#ob_std2').disabled = !e.target.checked;
-    updateResults();
-  });
-  el.querySelector('#ob_std').addEventListener('input',e=>{
-    state.oberflaeche.std = parseFloat(e.target.value)||0;
-    updateResults();
-  });
-  el.querySelector('#ob_std').addEventListener('blur',e=>{
-    const gerundet = rundeViertelstundeAuf(parseFloat(e.target.value)||0);
-    e.target.value = gerundet; state.oberflaeche.std = gerundet; updateResults();
-  });
-  el.querySelector('#ob_std2').addEventListener('input',e=>{
-    state.oberflaeche.std2 = parseFloat(e.target.value)||0;
-    updateResults();
-  });
-  el.querySelector('#ob_std2').addEventListener('blur',e=>{
-    const gerundet = rundeViertelstundeAuf(parseFloat(e.target.value)||0);
-    e.target.value = gerundet; state.oberflaeche.std2 = gerundet; updateResults();
-  });
   el.querySelector('#bm_aktiv').addEventListener('change',e=>{
     state.baustellenmontage.aktiv = e.target.checked;
     el.querySelector('#bm_std').disabled = !e.target.checked;
     el.querySelector('#bm_std2').disabled = !e.target.checked;
     el.querySelector('#bm_km').disabled = !e.target.checked;
+    el.querySelectorAll('[data-bm-weiter-ma]').forEach(inp=>inp.disabled = !e.target.checked);
     updateResults();
   });
   el.querySelector('#bm_std').addEventListener('input',e=>{
@@ -2561,6 +2720,18 @@ function renderKalkulation(el){
     const gerundet = rundeViertelstundeAuf(parseFloat(e.target.value)||0);
     e.target.value = gerundet; state.baustellenmontage.std2 = gerundet; updateResults();
   });
+  el.querySelectorAll('[data-bm-weiter-ma]').forEach(inp=>inp.addEventListener('input',e=>{
+    if(!state.baustellenmontage.weitereStunden) state.baustellenmontage.weitereStunden = {};
+    state.baustellenmontage.weitereStunden[e.target.dataset.bmWeiterMa] = parseFloat(e.target.value)||0;
+    updateResults();
+  }));
+  el.querySelectorAll('[data-bm-weiter-ma]').forEach(inp=>inp.addEventListener('blur',e=>{
+    const gerundet = rundeViertelstundeAuf(parseFloat(e.target.value)||0);
+    e.target.value = gerundet;
+    if(!state.baustellenmontage.weitereStunden) state.baustellenmontage.weitereStunden = {};
+    state.baustellenmontage.weitereStunden[e.target.dataset.bmWeiterMa] = gerundet;
+    updateResults();
+  }));
   el.querySelector('#bm_km').addEventListener('input',e=>{
     state.baustellenmontage.km = parseFloat(e.target.value)||0;
     const kostenEl = el.querySelector('#bm_km_kosten');
@@ -3024,15 +3195,18 @@ function renderKalkulation(el){
     const kmPauschaleBetrag = state.baustellenmontage?.aktiv ? ((state.baustellenmontage.km||0)*DB.settings.kmPauschale) : 0;
     const kleinmaterialBetrag = state.kleinmaterial?.aktiv ? (state.kleinmaterial.preis||0) : 0;
     const stueckzahlAz = Math.max(0, state.stueckzahl??1);
-    const stundenOberflaecheJeStueck = state.oberflaeche?.aktiv ? ((state.oberflaeche.std||0)+(state.oberflaeche.std2||0)) : 0;
-    const stundenNormalJeStueck = (state.az||[]).reduce((sum,pos)=>sum+(pos.std||0)+(pos.std2||0),0) + stundenOberflaecheJeStueck;
-    const stundenBaustelleJeStueck = state.baustellenmontage?.aktiv ? ((state.baustellenmontage.std||0)+(state.baustellenmontage.std2||0)) : 0;
+    const weitereMitarbeiterFuerPreis = (DB.settings.mitarbeiterListe||[]).filter(m=>m.id!=='m1' && m.id!=='m2');
+    const summeWeitereStunden = pos => Object.values(pos.weitereStunden||{}).reduce((a,b)=>a+(b||0),0);
+    const kostenWeitereStunden = pos => weitereMitarbeiterFuerPreis.reduce((s,m)=>s+((pos.weitereStunden?.[m.id]||0)*(m.satz||0)),0);
+    const stundenOberflaecheJeStueck = state.oberflaeche?.aktiv ? ((state.oberflaeche.std||0)+(state.oberflaeche.std2||0)+summeWeitereStunden(state.oberflaeche)) : 0;
+    const stundenNormalJeStueck = (state.az||[]).reduce((sum,pos)=>sum+(pos.std||0)+(pos.std2||0)+summeWeitereStunden(pos),0) + stundenOberflaecheJeStueck;
+    const stundenBaustelleJeStueck = state.baustellenmontage?.aktiv ? ((state.baustellenmontage.std||0)+(state.baustellenmontage.std2||0)+summeWeitereStunden(state.baustellenmontage)) : 0;
     const stundenOberflaeche = stundenOberflaecheJeStueck*stueckzahlAz;
     const stundenNormal = stundenNormalJeStueck*stueckzahlAz;
     const stundenBaustelle = stundenBaustelleJeStueck*stueckzahlAz;
     const stunden = stundenNormal + stundenBaustelle;
-    const azKostenJeStueck = (state.az||[]).reduce((sum,pos)=>sum + (pos.std||0)*s.mitarbeiter1Satz + (pos.std2||0)*s.mitarbeiter2Satz, 0);
-    const oberflaecheKostenJeStueck = state.oberflaeche?.aktiv ? ((state.oberflaeche.std||0)*s.mitarbeiter1Satz + (state.oberflaeche.std2||0)*s.mitarbeiter2Satz) : 0;
+    const azKostenJeStueck = (state.az||[]).reduce((sum,pos)=>sum + (pos.std||0)*s.mitarbeiter1Satz + (pos.std2||0)*s.mitarbeiter2Satz + kostenWeitereStunden(pos), 0);
+    const oberflaecheKostenJeStueck = state.oberflaeche?.aktiv ? ((state.oberflaeche.std||0)*s.mitarbeiter1Satz + (state.oberflaeche.std2||0)*s.mitarbeiter2Satz + kostenWeitereStunden(state.oberflaeche)) : 0;
     const arbeitszeitKosten = (azKostenJeStueck + oberflaecheKostenJeStueck)*stueckzahlAz + stundenBaustelle*(s.stundensatzBaustelle||s.stundensatz);
 
     // Gewinnzuschlag je Position statt Gemeinkosten + einmaligem Gewinn
@@ -3050,6 +3224,7 @@ function renderKalkulation(el){
       materialNetto,kantenKosten,puVerleimungKosten,zusatzKosten,azBreakdown:(state.az||[]).map(pos=>({name:pos.name,std:((pos.std||0)+(pos.std2||0))*stueckzahlAz})),
       azBreakdownM1:(state.az||[]).map(pos=>({name:pos.name,std:(pos.std||0)*stueckzahlAz})),
       azBreakdownM2:(state.az||[]).map(pos=>({name:pos.name,std:(pos.std2||0)*stueckzahlAz})),
+      azBreakdownWeitere:(state.az||[]).map(pos=>({name:pos.name, weitere:Object.fromEntries(weitereMitarbeiterFuerPreis.map(m=>[m.id,(pos.weitereStunden?.[m.id]||0)*stueckzahlAz]))})),
       baustellenmontageStd:stundenBaustelle, baustellenmontageKm:(state.baustellenmontage?.aktiv?(state.baustellenmontage.km||0):0),
       baustellenmontageStdM1:(state.baustellenmontage?.aktiv?(state.baustellenmontage.std||0):0)*stueckzahlAz,
       baustellenmontageStdM2:(state.baustellenmontage?.aktiv?(state.baustellenmontage.std2||0):0)*stueckzahlAz,
@@ -3118,7 +3293,7 @@ function renderKalkulation(el){
           <div class="checkline"><b class="small">→ Preis inkl. Zuschlag</b><b class="mono" style="margin-left:auto">${fmtEUR(zusatzKosten+gewinnZusatzBetrag)}</b></div>
           ${lieferkostenBetrag>0?`<div class="kv"><span>🚚 Lieferkosten</span><b>${fmtEUR(lieferkostenBetrag)}</b></div>`:''}
           ${kleinmaterialBetrag>0?`<div class="kv"><span>🔩 Kleinmaterial</span><b>${fmtEUR(kleinmaterialBetrag)}</b></div>`:''}
-          <div class="kv"><span>Arbeitszeit (${stundenNormal.toFixed(2)} Std. × ${fmtEUR(s.stundensatz)})</span><b>${fmtEUR(stundenNormal*s.stundensatz)}</b></div>
+          <div class="kv"><span>Arbeitszeit (${stundenNormal.toFixed(2)} Std.)</span><b>${fmtEUR(azKostenJeStueck*stueckzahlAz + oberflaecheKostenJeStueck*stueckzahlAz)}</b></div>
           ${stundenBaustelle>0?`<div class="kv"><span>Baustellenmontage (${stundenBaustelle.toFixed(2)} Std. × ${fmtEUR(s.stundensatzBaustelle||s.stundensatz)})</span><b>${fmtEUR(stundenBaustelle*(s.stundensatzBaustelle||s.stundensatz))}</b></div>`:''}
           ${kmPauschaleBetrag>0?`<div class="kv"><span>Kilometerpauschale Bus (${state.baustellenmontage.km} km × ${fmtEUR(DB.settings.kmPauschale)})</span><b>${fmtEUR(kmPauschaleBetrag)}</b></div>`:''}
           <div class="kv total"><span>Verkaufspreis</span><b>${fmtEUR(verkaufspreis)}</b></div>
@@ -3230,6 +3405,10 @@ function projektGeplantGesamt(p){
     (g.azBreakdown||[]).forEach(pos=>{ sum.az[pos.name] = (sum.az[pos.name]||0) + (pos.std||0); });
     (g.azBreakdownM1||[]).forEach(pos=>{ sum.azM1[pos.name] = (sum.azM1[pos.name]||0) + (pos.std||0); });
     (g.azBreakdownM2||[]).forEach(pos=>{ sum.azM2[pos.name] = (sum.azM2[pos.name]||0) + (pos.std||0); });
+    (g.azBreakdownWeitere||[]).forEach(pos=>{
+      if(!sum.azWeitere[pos.name]) sum.azWeitere[pos.name] = {};
+      Object.entries(pos.weitere||{}).forEach(([maId,std])=>{ sum.azWeitere[pos.name][maId] = (sum.azWeitere[pos.name][maId]||0) + (std||0); });
+    });
     Object.entries(g.beschlagQtySnapshot||{}).forEach(([id,qty])=>{ sum.beschlagQty[id] = (sum.beschlagQty[id]||0) + (qty||0); });
     Object.entries(g.beschlagPreisSnapshot||{}).forEach(([id,preis])=>{ sum.beschlagPreis[id] = preis; });
     if(g.materialKorpusId) sum.materialKorpusId = g.materialKorpusId;
@@ -3270,16 +3449,42 @@ function projektGeplantGesamt(p){
     };
   }, {material:0, materialNetto:0, korpusMaterialKosten:0, frontMaterialKosten:0, rueckwandMaterialKosten:0, zusatzPlattenMaterialKosten:0,
       korpusFl:0, frontFl:0, rueckFl:0, zusatzPlattenFlaeche:0,
-      kantenKosten:0, kantenLfm:0, beschlagKosten:0, zusatzKosten:0, puVerleimung:false, baustellenmontageStd:0, baustellenmontageStdM1:0, baustellenmontageStdM2:0, oberflaecheStd:0, oberflaecheStdM1:0, oberflaecheStdM2:0, lieferkostenBetrag:0, kleinmaterialBetrag:0, kmPauschaleBetrag:0, baustellenmontageKm:0, zeit:0, kosten:0, az:{}, azM1:{}, azM2:{}, beschlagQty:{}, beschlagPreis:{}, zusatzPlatten:[], zusatzpositionen:[],
+      kantenKosten:0, kantenLfm:0, beschlagKosten:0, zusatzKosten:0, puVerleimung:false, baustellenmontageStd:0, baustellenmontageStdM1:0, baustellenmontageStdM2:0, oberflaecheStd:0, oberflaecheStdM1:0, oberflaecheStdM2:0, lieferkostenBetrag:0, kleinmaterialBetrag:0, kmPauschaleBetrag:0, baustellenmontageKm:0, zeit:0, kosten:0, az:{}, azM1:{}, azM2:{}, azWeitere:{}, beschlagQty:{}, beschlagPreis:{}, zusatzPlatten:[], zusatzpositionen:[],
       materialKorpusId:'', materialFrontId:'', materialRueckwandId:''});
   return out;
 }
-/* Berechnet den tatsächlichen NK-Gesamtpreis (Ist, inkl. Zuschläge) eines Projekts — eigenständig nutzbar,
-   z.B. für die Projektübersicht, ohne die komplette Nachkalkulation-Seite rendern zu müssen. */
-function berechneNkVerkaufspreis(p){
+/* Vollständige NK-Kennzahlen (Soll & Ist) eines Projekts — eigenständig nutzbar, z.B. für die
+   Projektübersicht oder die Mehrprojekt-Zusammenfassung, ohne die komplette Nachkalkulation-Seite
+   rendern zu müssen. "Gewinn" = Verkaufspreis minus Material-/Zeitkosten (dieselbe Definition wird
+   für Soll wie für Ist verwendet, damit beide Seiten vergleichbar bleiben). */
+function berechneNkKennzahlenVoll(p){
   const geplant = projektGeplantGesamt(p);
+  const materialGesamtSoll = geplant.materialNetto+geplant.kantenKosten+geplant.beschlagKosten+geplant.zusatzKosten+geplant.lieferkostenBetrag+geplant.kleinmaterialBetrag;
+  const zeitGesamtSoll = geplant.zeit;
+  const weitereMitarbeiterFuerNk = (DB.settings.mitarbeiterListe||[]).filter(m=>m.id!=='m1' && m.id!=='m2');
+  const azSollM1Gesamt = Object.values(geplant.azM1||{}).reduce((s,v)=>s+v,0) + geplant.oberflaecheStdM1;
+  const azSollM2Gesamt = Object.values(geplant.azM2||{}).reduce((s,v)=>s+v,0) + geplant.oberflaecheStdM2;
+  const azSollWeitereKosten = weitereMitarbeiterFuerNk.reduce((sum,m)=>{
+    const std = Object.values(geplant.azWeitere||{}).reduce((s,pos)=>s+(pos[m.id]||0),0);
+    return sum + std*(m.satz||0);
+  },0);
+  const arbeitszeitGesamtSoll = azSollM1Gesamt*DB.settings.mitarbeiter1Satz + azSollM2Gesamt*DB.settings.mitarbeiter2Satz
+    + geplant.baustellenmontageStd * (DB.settings.stundensatzBaustelle||DB.settings.stundensatz) + azSollWeitereKosten;
+  const gewinnSoll = geplant.kosten - materialGesamtSoll - arbeitszeitGesamtSoll;
+  const margeSollProzent = geplant.kosten>0 ? (gewinnSoll/geplant.kosten*100) : 0;
+
   const nk = DB.nachkalkulation.find(x=>x.projId===p.id);
-  if(!nk) return geplant.kosten; // noch keine Nachkalkulation erfasst -> identisch zum VK-Preis
+  if(!nk){
+    // Noch keine Nachkalkulation erfasst -> Ist identisch zum Soll
+    return {
+      verkaufspreisSoll:geplant.kosten, verkaufspreisIst:geplant.kosten,
+      materialSoll:materialGesamtSoll, materialIst:materialGesamtSoll,
+      zeitSoll:zeitGesamtSoll, zeitIst:zeitGesamtSoll,
+      bmZeitSoll:geplant.baustellenmontageStd, bmZeitIst:geplant.baustellenmontageStd,
+      gewinnSoll, gewinnIst:gewinnSoll, margeSollProzent, margeIstProzent:margeSollProzent,
+      erfasst:false,
+    };
+  }
   const findMatLokal = id => DB.materials.find(m=>m.id===id);
   const zPn = 1 + ((DB.settings.zuschlagZusatzplatten||0)/100);
   const zKn = 1 + ((DB.settings.zuschlagKorpus||0)/100);
@@ -3307,6 +3512,11 @@ function berechneNkVerkaufspreis(p){
     const qty = (nk.beschlagIstQty||{})[id] ?? geplant.beschlagQty[id] ?? 0;
     return s+preis*qty;
   },0);
+  const zusatzpositionenNettoIst = (geplant.zusatzpositionen||[]).reduce((s,pos)=>{
+    const gespeichert = (nk.zusatzpositionenIst||{})[pos.key];
+    const menge = gespeichert?.menge ?? pos.menge; const preis = gespeichert?.preis ?? pos.preis;
+    return s+(menge*preis);
+  },0) + (nk.zusatzpositionenExtra||[]).reduce((s,ex)=>s+((ex.menge||0)*(ex.preis||0)),0);
   const zusatzposMitGewinnIst = (geplant.zusatzpositionen||[]).reduce((s,pos)=>{
     const gespeichert = (nk.zusatzpositionenIst||{})[pos.key];
     const menge = gespeichert?.menge ?? pos.menge; const preis = gespeichert?.preis ?? pos.preis;
@@ -3320,21 +3530,51 @@ function berechneNkVerkaufspreis(p){
   const oberflaecheIstM2 = nk.oberflaecheIst2===null||nk.oberflaecheIst2===undefined ? geplant.oberflaecheStdM2 : (parseFloat(nk.oberflaecheIst2)||0);
   const baustellenmontageIstM1 = nk.baustellenmontageIst===null||nk.baustellenmontageIst===undefined ? geplant.baustellenmontageStdM1 : (parseFloat(nk.baustellenmontageIst)||0);
   const baustellenmontageIstM2 = nk.baustellenmontageIst2===null||nk.baustellenmontageIst2===undefined ? geplant.baustellenmontageStdM2 : (parseFloat(nk.baustellenmontageIst2)||0);
-  const zeitGesamtIst = nk.nurGesamtstundenModus
+  const summeWeitereIst = r => Object.values(r.weitereStunden||{}).reduce((a,b)=>a+(b||0),0);
+  const kostenWeitereIst = r => weitereMitarbeiterFuerNk.reduce((s,m)=>s+((r.weitereStunden?.[m.id]||0)*(m.satz||0)),0);
+  const bmWeitereIstGesamt = weitereMitarbeiterFuerNk.reduce((s,m)=>s+(nk.baustellenmontageIstWeitere?.[m.id]||0),0);
+  const bmWeitereIstKosten = weitereMitarbeiterFuerNk.reduce((s,m)=>s+((nk.baustellenmontageIstWeitere?.[m.id]||0)*(m.satz||0)),0);
+  const zeitGesamtIstRoh = nk.nurGesamtstundenModus
     ? (parseFloat(nk.gesamtstundenDirekt)||0)
-    : azIstListe.reduce((s,r)=>s+(r.std||0)+(r.std2||0),0) + oberflaecheIstM1+oberflaecheIstM2 + baustellenmontageIstM1+baustellenmontageIstM2;
-  const arbeitszeitGesamtIst = nk.nurGesamtstundenModus
-    ? zeitGesamtIst*DB.settings.stundensatz
-    : azIstListe.reduce((s,r)=>s+(r.std||0)*DB.settings.mitarbeiter1Satz+(r.std2||0)*DB.settings.mitarbeiter2Satz, 0)
+    : azIstListe.reduce((s,r)=>s+(r.std||0)+(r.std2||0)+summeWeitereIst(r),0) + oberflaecheIstM1+oberflaecheIstM2 + baustellenmontageIstM1+baustellenmontageIstM2+bmWeitereIstGesamt;
+  // Erst hier, bei der GESAMTSUMME aller Fertigungsschritte, wird auf volle Viertelstunden aufgerundet —
+  // jede einzelne Position bleibt exakt/roh, wie tatsächlich erfasst.
+  const zeitGesamtIst = Math.ceil(zeitGesamtIstRoh*4)/4;
+  const arbeitszeitGesamtIstRoh = nk.nurGesamtstundenModus
+    ? zeitGesamtIstRoh*DB.settings.stundensatz
+    : azIstListe.reduce((s,r)=>s+(r.std||0)*DB.settings.mitarbeiter1Satz+(r.std2||0)*DB.settings.mitarbeiter2Satz+kostenWeitereIst(r), 0)
       + oberflaecheIstM1*DB.settings.mitarbeiter1Satz + oberflaecheIstM2*DB.settings.mitarbeiter2Satz
-      + (baustellenmontageIstM1+baustellenmontageIstM2)*(DB.settings.stundensatzBaustelle||DB.settings.stundensatz);
-  return materialNettoIst*(1+DB.settings.gewinnMaterial/100)
+      + (baustellenmontageIstM1+baustellenmontageIstM2)*(DB.settings.stundensatzBaustelle||DB.settings.stundensatz)
+      + bmWeitereIstKosten;
+  // Die Aufrundung auf volle Viertelstunden wird hier proportional auf den Euro-Betrag übertragen (statt
+  // separat neu zu berechnen) — so bleiben Stunden- und Euro-Anzeige immer konsistent zueinander, auch
+  // wenn mehrere Mitarbeiter mit unterschiedlichem Stundensatz beteiligt sind.
+  const rundungsFaktor = zeitGesamtIstRoh>0 ? zeitGesamtIst/zeitGesamtIstRoh : 1;
+  const arbeitszeitGesamtIst = arbeitszeitGesamtIstRoh * rundungsFaktor;
+  const zusatzarbeiten = parseFloat(nk.zusatzarbeiten)||0;
+  const verkaufspreisIst = materialNettoIst*(1+DB.settings.gewinnMaterial/100)
     + (kantenNettoIst+puVerleimungKostenIst)*(1+DB.settings.gewinnKanten/100)
     + beschlagGesamtIst*(1+DB.settings.gewinnBeschlaege/100)
     + zusatzposMitGewinnIst
     + lieferkostenIst + kleinmaterialIst + (kmIst*DB.settings.kmPauschale)
-    + arbeitszeitGesamtIst + (parseFloat(nk.zusatzarbeiten)||0);
+    + arbeitszeitGesamtIst + zusatzarbeiten;
+  // Materialgesamt (Ist) exakt wie in der Nachkalkulation-Ansicht definiert: alle Netto-Kosten
+  // ohne Zuschläge, inkl. Kanten, Beschläge, Zusatzpositionen, Lieferkosten und Kleinmaterial.
+  const materialGesamtIst = materialNettoIst + kantenNettoIst + beschlagGesamtIst + zusatzpositionenNettoIst + lieferkostenIst + kleinmaterialIst;
+  const gewinnIst = verkaufspreisIst - materialGesamtIst - arbeitszeitGesamtIst - zusatzarbeiten;
+  const margeIstProzent = verkaufspreisIst>0 ? (gewinnIst/verkaufspreisIst*100) : 0;
+  const bmZeitIst = baustellenmontageIstM1 + baustellenmontageIstM2 + bmWeitereIstGesamt;
+  return {
+    verkaufspreisSoll:geplant.kosten, verkaufspreisIst,
+    materialSoll:materialGesamtSoll, materialIst:materialGesamtIst,
+    zeitSoll:zeitGesamtSoll, zeitIst:zeitGesamtIst,
+    bmZeitSoll:geplant.baustellenmontageStd, bmZeitIst,
+    gewinnSoll, gewinnIst, margeSollProzent, margeIstProzent,
+    erfasst:true,
+  };
 }
+/* Dünner Wrapper für bestehende Aufrufer, die nur den NK-Gesamtpreis (Ist) brauchen. */
+function berechneNkVerkaufspreis(p){ return berechneNkKennzahlenVoll(p).verkaufspreisIst; }
 function matOptions(selId,bereich){
   let liste = DB.materials.filter(m=>{ const b=bereichAlsArray(m.bereich); return b.includes(bereich) || b.includes('Sondermaterial'); });
   if(!liste.length) liste = DB.materials; // Fallback: falls kein Material für diesen Bereich hinterlegt ist, alle zeigen
@@ -3690,14 +3930,16 @@ function fmtStdMin(std){
 }
 function renderArbeitszeit(el){
   const s = DB.settings;
-  const zeitkontoZeile = (key, name, monatslohn, satz) => {
+  const istStdFuerMitarbeiter = (r, m) => m.id==='m1' ? (r.std||0) : m.id==='m2' ? (r.std2||0) : (r.weitereStunden?.[m.id]||0);
+  const zeitkontoZeile = m => {
+    const monatslohn = m.monatslohn, satz = m.stundenlohnTatsaechlich;
     if(!monatslohn || !satz) return '';
     const sollMonatAuto = monatslohn/satz;
-    const sollMonatManuell = key==='1' ? DB.settings.mitarbeiter1SollMonatManuell : DB.settings.mitarbeiter2SollMonatManuell;
+    const sollMonatManuell = m.sollMonatManuell;
     const sollMonat = (sollMonatManuell!==null && sollMonatManuell!==undefined && sollMonatManuell!=='') ? parseFloat(sollMonatManuell) : sollMonatAuto;
     const heute = new Date();
     let monate = 1;
-    const beginn = key==='1' ? DB.settings.mitarbeiter1Beginn : DB.settings.mitarbeiter2Beginn;
+    const beginn = m.beginn;
     if(beginn){
       const start = new Date(beginn);
       monate = Math.max(1, (heute.getFullYear()-start.getFullYear())*12 + (heute.getMonth()-start.getMonth()) + 1);
@@ -3705,16 +3947,20 @@ function renderArbeitszeit(el){
     const sollGesamt = sollMonat*monate;
     let istAutomatisch = 0;
     DB.nachkalkulation.forEach(nk=>{
-      (nk.azIst||[]).forEach(r=>{ istAutomatisch += (key==='1' ? (r.std||0) : (r.std2||0)); });
-      istAutomatisch += (key==='1' ? (parseFloat(nk.oberflaecheIst)||0) : (parseFloat(nk.oberflaecheIst2)||0));
-      istAutomatisch += (key==='1' ? (parseFloat(nk.baustellenmontageIst)||0) : (parseFloat(nk.baustellenmontageIst2)||0));
+      (nk.azIst||[]).forEach(r=>{ istAutomatisch += istStdFuerMitarbeiter(r, m); });
+      if(m.id==='m1') istAutomatisch += (parseFloat(nk.oberflaecheIst)||0);
+      if(m.id==='m2') istAutomatisch += (parseFloat(nk.oberflaecheIst2)||0);
+      if(m.id==='m1') istAutomatisch += (parseFloat(nk.baustellenmontageIst)||0);
+      else if(m.id==='m2') istAutomatisch += (parseFloat(nk.baustellenmontageIst2)||0);
+      else istAutomatisch += (nk.baustellenmontageIstWeitere?.[m.id]||0);
     });
-    const basisStunden = parseFloat(key==='1' ? DB.settings.mitarbeiter1BasisStunden : DB.settings.mitarbeiter2BasisStunden) || 0;
+    const basisStunden = parseFloat(m.basisStunden) || 0;
     const istGesamt = istAutomatisch + basisStunden;
     const diff = istGesamt-sollGesamt;
     const balkenProzent = sollGesamt>0 ? Math.min(100, (istGesamt/sollGesamt)*100) : 0;
+    const key = m.id;
     return `<div style="border-bottom:1px solid var(--border);padding-bottom:18px;margin-bottom:18px">
-      <div style="font-weight:700;font-size:18px;margin-bottom:12px">${name}${beginn?` <span style="font-weight:400;opacity:.7;font-size:14px">· beschäftigt seit ${new Date(beginn).toLocaleDateString('de-DE')}</span>`:''}</div>
+      <div style="font-weight:700;font-size:18px;margin-bottom:12px">${m.name}${beginn?` <span style="font-weight:400;opacity:.7;font-size:14px">· beschäftigt seit ${new Date(beginn).toLocaleDateString('de-DE')}</span>`:''}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:14px;font-size:15px">
         <div>
           <div style="font-weight:700;text-transform:uppercase;letter-spacing:.3px;opacity:.6;margin-bottom:8px;font-size:13px">Soll</div>
@@ -3740,7 +3986,7 @@ function renderArbeitszeit(el){
     </div>`;
   };
   // Je Mitarbeiter: an welchen Projekten wie lange gearbeitet wurde (aus allen Nachkalkulationen zusammengetragen)
-  const projektUebersichtJeMitarbeiter = key => {
+  const projektUebersichtJeMitarbeiter = m => {
     const zeilen = [];
     DB.nachkalkulation.forEach(nk=>{
       const projekt = DB.projects.find(p=>p.id===nk.projId);
@@ -3748,12 +3994,12 @@ function renderArbeitszeit(el){
       let summe = 0;
       const posDetails = [];
       (nk.azIst||[]).forEach(r=>{
-        const std = key==='1' ? (r.std||0) : (r.std2||0);
+        const std = istStdFuerMitarbeiter(r, m);
         if(std>0){ summe += std; posDetails.push(`${r.name}: ${fmtStdMin(std)}`); }
       });
-      const ob = key==='1' ? (parseFloat(nk.oberflaecheIst)||0) : (parseFloat(nk.oberflaecheIst2)||0);
-      if(ob>0){ summe += ob; posDetails.push(`Oberfläche: ${fmtStdMin(ob)}`); }
-      const bm = key==='1' ? (parseFloat(nk.baustellenmontageIst)||0) : (parseFloat(nk.baustellenmontageIst2)||0);
+      if(m.id==='m1'){ const ob=(parseFloat(nk.oberflaecheIst)||0); if(ob>0){ summe += ob; posDetails.push(`Oberfläche: ${fmtStdMin(ob)}`); } }
+      if(m.id==='m2'){ const ob=(parseFloat(nk.oberflaecheIst2)||0); if(ob>0){ summe += ob; posDetails.push(`Oberfläche: ${fmtStdMin(ob)}`); } }
+      const bm = m.id==='m1' ? (parseFloat(nk.baustellenmontageIst)||0) : m.id==='m2' ? (parseFloat(nk.baustellenmontageIst2)||0) : (nk.baustellenmontageIstWeitere?.[m.id]||0);
       if(bm>0){ summe += bm; posDetails.push(`Baustellenmontage: ${fmtStdMin(bm)}`); }
       if(summe>0) zeilen.push({projekt, kunde:projekt.kunde||'—', datum:projekt.datum||'', summe, posDetails});
     });
@@ -3769,12 +4015,12 @@ function renderArbeitszeit(el){
     return zeilen;
   };
   const pfeil = spalte => arbeitszeitSortSpalte===spalte ? (arbeitszeitSortRichtung==='auf'?' ▲':' ▼') : '';
-  const uebersichtHtml = (key, name) => {
-    const zeilen = projektUebersichtJeMitarbeiter(key);
+  const uebersichtHtml = m => {
+    const zeilen = projektUebersichtJeMitarbeiter(m);
     if(!zeilen.length) return '';
     const gesamt = zeilen.reduce((s,z)=>s+z.summe,0);
     return `<div style="margin-bottom:18px">
-      <div style="font-weight:700;margin-bottom:6px">${name} <span class="small mono" style="font-weight:400;opacity:.75">— insgesamt ${fmtStdMin(gesamt)} über ${zeilen.length} Projekt(e)</span></div>
+      <div style="font-weight:700;margin-bottom:6px">${m.name} <span class="small mono" style="font-weight:400;opacity:.75">— insgesamt ${fmtStdMin(gesamt)} über ${zeilen.length} Projekt(e)</span></div>
       <table><thead><tr>
         <th style="cursor:pointer" data-az-sort="datum">Datum${pfeil('datum')}</th>
         <th style="cursor:pointer" data-az-sort="kunde">Kunde${pfeil('kunde')}</th>
@@ -3786,44 +4032,47 @@ function renderArbeitszeit(el){
       </tbody></table>
     </div>`;
   };
-  const uebersicht1 = uebersichtHtml('1', s.mitarbeiter1Name);
-  const uebersicht2 = uebersichtHtml('2', s.mitarbeiter2Name);
+  const alleMitarbeiterFuerZeitkonto = s.mitarbeiterListe || [];
+  const uebersichtenJeMitarbeiter = alleMitarbeiterFuerZeitkonto.map(m=>({m, html:uebersichtHtml(m)}));
   el.innerHTML = `
     <div class="pagehead"><div><h1>Arbeitszeit</h1><p>Zeitkonto-Verwaltung und Übersicht, an welchen Projekten die Mitarbeiter gearbeitet haben.</p></div></div>
     <div class="card">
       <h3>🕐 Zeitkonto-Einstellungen (für Minijob/Teilzeit mit festem Monatslohn)</h3>
-      <div class="small" style="margin-bottom:8px">Soll-Stunden pro Monat werden automatisch aus Monatslohn ÷ tatsächlichem Stundenlohn berechnet. Das ist der reale Lohn, NICHT der Verrechnungssatz aus den Einstellungen (der für die Preiskalkulation genutzt wird). Leer lassen, wenn kein Zeitkonto benötigt wird.</div>
-      <div class="field-row-inline" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:8px">
-        <div class="field" style="flex:1;margin:0"><label>${s.mitarbeiter1Name}: Monatslohn</label><input type="number" step="1" id="az_ma1lohn" value="${s.mitarbeiter1Monatslohn||''}" placeholder="z. B. 605"></div>
-        <span class="small" style="padding-bottom:10px">€</span>
-        <div class="field" style="width:130px;margin:0"><label>Tatsächlicher Lohn</label><input type="number" step="0.5" id="az_ma1satz" value="${s.mitarbeiter1StundenlohnTatsaechlich||''}" placeholder="z. B. 14"></div>
-        <span class="small" style="padding-bottom:10px">€/Std.</span>
-        <div class="field" style="flex:1;margin:0"><label>Beschäftigt seit</label><input type="date" id="az_ma1beginn" value="${s.mitarbeiter1Beginn||''}"></div>
+      <div class="small" style="margin-bottom:12px">Soll-Stunden pro Monat werden automatisch aus Monatslohn ÷ tatsächlichem Stundenlohn berechnet. Das ist der reale Lohn, NICHT der Verrechnungssatz aus den Einstellungen (der für die Preiskalkulation genutzt wird). Leer lassen, wenn kein Zeitkonto benötigt wird.</div>
+      ${(s.mitarbeiterListe||[]).map((m,i)=>`
+        <div style="margin-bottom:8px${i<s.mitarbeiterListe.length-1?';border-bottom:1px dashed var(--border);padding-bottom:12px':''}">
+          <div class="field-row-inline" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:8px">
+            <div class="field" style="flex:1;margin:0"><label>Name</label><input type="text" data-zk-ma-name="${m.id}" value="${m.name}"></div>
+            <div class="field" style="width:130px;margin:0"><label>Verrechnungssatz</label><input type="number" step="0.5" data-zk-ma-vsatz="${m.id}" value="${m.satz||0}"></div>
+            <span class="small" style="padding-bottom:10px">€/Std.</span>
+            ${(m.id!=='m1' && m.id!=='m2') ? `<button class="btn btn-ghost btn-sm" data-zk-ma-loeschen="${m.id}" style="margin-bottom:0">✕ entfernen</button>` : ''}
+          </div>
+          <div class="field-row-inline" style="display:flex;gap:10px;align-items:flex-end">
+            <div class="field" style="flex:1;margin:0"><label>Monatslohn (fürs Zeitkonto)</label><input type="number" step="1" data-zk-ma-lohn="${m.id}" value="${m.monatslohn||''}" placeholder="z. B. 605"></div>
+            <span class="small" style="padding-bottom:10px">€</span>
+            <div class="field" style="width:130px;margin:0"><label>Tatsächlicher Lohn</label><input type="number" step="0.5" data-zk-ma-satz="${m.id}" value="${m.stundenlohnTatsaechlich||''}" placeholder="z. B. 14"></div>
+            <span class="small" style="padding-bottom:10px">€/Std.</span>
+            <div class="field" style="flex:1;margin:0"><label>Beschäftigt seit</label><input type="date" data-zk-ma-beginn="${m.id}" value="${m.beginn||''}"></div>
+          </div>
+        </div>`).join('')}
+      <div class="btn-row" style="margin-top:4px">
+        <button class="btn btn-primary" id="az_ma_save">Speichern</button>
+        <button class="btn btn-ghost" id="az_ma_neu">+ Mitarbeiter hinzufügen</button>
       </div>
-      <div class="field-row-inline" style="display:flex;gap:10px;align-items:flex-end">
-        <div class="field" style="flex:1;margin:0"><label>${s.mitarbeiter2Name}: Monatslohn</label><input type="number" step="1" id="az_ma2lohn" value="${s.mitarbeiter2Monatslohn||''}" placeholder="z. B. 605"></div>
-        <span class="small" style="padding-bottom:10px">€</span>
-        <div class="field" style="width:130px;margin:0"><label>Tatsächlicher Lohn</label><input type="number" step="0.5" id="az_ma2satz" value="${s.mitarbeiter2StundenlohnTatsaechlich||''}" placeholder="z. B. 14"></div>
-        <span class="small" style="padding-bottom:10px">€/Std.</span>
-        <div class="field" style="flex:1;margin:0"><label>Beschäftigt seit</label><input type="date" id="az_ma2beginn" value="${s.mitarbeiter2Beginn||''}"></div>
-      </div>
-      <div class="btn-row"><button class="btn btn-primary" id="az_ma_save">Speichern</button></div>
     </div>
-    ${(s.mitarbeiter1Monatslohn && s.mitarbeiter1StundenlohnTatsaechlich) || (s.mitarbeiter2Monatslohn && s.mitarbeiter2StundenlohnTatsaechlich) ? `<div class="card">
+    ${alleMitarbeiterFuerZeitkonto.some(m=>m.monatslohn && m.stundenlohnTatsaechlich) ? `<div class="card">
       <h3>🕐 Zeitkonto-Übersicht</h3>
       <div class="small" style="margin-bottom:12px">Läuft komplett automatisch aus Monatslohn, tatsächlichem Stundenlohn, Beschäftigt-seit-Datum und den tatsächlich in der Nachkalkulation erfassten Stunden.</div>
-      ${zeitkontoZeile('1', s.mitarbeiter1Name, s.mitarbeiter1Monatslohn, s.mitarbeiter1StundenlohnTatsaechlich)}
-      ${zeitkontoZeile('2', s.mitarbeiter2Name, s.mitarbeiter2Monatslohn, s.mitarbeiter2StundenlohnTatsaechlich)}
+      ${alleMitarbeiterFuerZeitkonto.map(m=>zeitkontoZeile(m)).join('')}
     </div>` : ''}
     <div class="card">
       <h3>📋 Übersicht — Stunden je Mitarbeiter und Projekt</h3>
-      ${(uebersicht1||uebersicht2) ? `<div class="field" style="max-width:220px;margin-bottom:12px"><label>Mitarbeiter</label>
+      ${uebersichtenJeMitarbeiter.some(u=>u.html) ? `<div class="field" style="max-width:220px;margin-bottom:12px"><label>Mitarbeiter</label>
         <select id="az_ma_filter">
           <option value="alle" ${arbeitszeitMitarbeiterFilter==='alle'?'selected':''}>Alle</option>
-          ${uebersicht1?`<option value="1" ${arbeitszeitMitarbeiterFilter==='1'?'selected':''}>${s.mitarbeiter1Name}</option>`:''}
-          ${uebersicht2?`<option value="2" ${arbeitszeitMitarbeiterFilter==='2'?'selected':''}>${s.mitarbeiter2Name}</option>`:''}
+          ${uebersichtenJeMitarbeiter.filter(u=>u.html).map(u=>`<option value="${u.m.id}" ${arbeitszeitMitarbeiterFilter===u.m.id?'selected':''}>${u.m.name}</option>`).join('')}
         </select></div>
-        ${arbeitszeitMitarbeiterFilter==='1' ? uebersicht1 : arbeitszeitMitarbeiterFilter==='2' ? uebersicht2 : `${uebersicht1}${uebersicht2}`}`
+        ${arbeitszeitMitarbeiterFilter==='alle' ? uebersichtenJeMitarbeiter.map(u=>u.html).join('') : (uebersichtenJeMitarbeiter.find(u=>u.m.id===arbeitszeitMitarbeiterFilter)?.html || uebersichtenJeMitarbeiter.map(u=>u.html).join(''))}`
         : emptyState('⏱️','Noch keine Stunden erfasst','Sobald in der Nachkalkulation Ist-Stunden stehen (automatisch aus der Werkstatt-App oder manuell eingetragen), erscheint hier die Übersicht je Mitarbeiter.')}
     </div>`;
   el.querySelector('#az_ma_filter')?.addEventListener('change', e=>{
@@ -3836,35 +4085,68 @@ function renderArbeitszeit(el){
     else { arbeitszeitSortSpalte = spalte; arbeitszeitSortRichtung = 'auf'; }
     renderMain();
   }));
+  el.querySelector('#az_ma_neu')?.addEventListener('click', async ()=>{
+    const name = prompt('Name des neuen Mitarbeiters:');
+    if(!name || !name.trim()) return;
+    const satzText = prompt('Verrechnungssatz (€/Std., für die Preiskalkulation):', '42');
+    const satz = parseFloat(satzText)||0;
+    if(!DB.settings.mitarbeiterListe) DB.settings.mitarbeiterListe = [];
+    DB.settings.mitarbeiterListe.splice(2, 0, {id:'m_'+uid(), name:name.trim(), satz, stundenlohnTatsaechlich:0, monatslohn:0, beginn:'', basisStunden:0, sollMonatManuell:null});
+    await save('settings');
+    renderMain();
+  });
+  el.querySelectorAll('[data-zk-ma-loeschen]').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const id = btn.dataset.zkMaLoeschen;
+    if(!confirm('Diesen Mitarbeiter wirklich entfernen?')) return;
+    DB.settings.mitarbeiterListe = DB.settings.mitarbeiterListe.filter(x=>x.id!==id);
+    await save('settings');
+    renderMain();
+  }));
   el.querySelector('#az_ma_save').addEventListener('click', async ()=>{
-    DB.settings.mitarbeiter1Monatslohn = parseFloat(document.getElementById('az_ma1lohn').value)||0;
-    DB.settings.mitarbeiter1StundenlohnTatsaechlich = parseFloat(document.getElementById('az_ma1satz').value)||0;
-    DB.settings.mitarbeiter1Beginn = document.getElementById('az_ma1beginn').value;
-    DB.settings.mitarbeiter2Monatslohn = parseFloat(document.getElementById('az_ma2lohn').value)||0;
-    DB.settings.mitarbeiter2StundenlohnTatsaechlich = parseFloat(document.getElementById('az_ma2satz').value)||0;
-    DB.settings.mitarbeiter2Beginn = document.getElementById('az_ma2beginn').value;
+    (DB.settings.mitarbeiterListe||[]).forEach(m=>{
+      const nameFeld = el.querySelector(`[data-zk-ma-name="${m.id}"]`);
+      const vsatzFeld = el.querySelector(`[data-zk-ma-vsatz="${m.id}"]`);
+      const lohnFeld = el.querySelector(`[data-zk-ma-lohn="${m.id}"]`);
+      const satzFeld = el.querySelector(`[data-zk-ma-satz="${m.id}"]`);
+      const beginnFeld = el.querySelector(`[data-zk-ma-beginn="${m.id}"]`);
+      if(!lohnFeld) return;
+      m.name = nameFeld.value.trim() || m.name;
+      m.satz = parseFloat(vsatzFeld.value)||0;
+      m.monatslohn = parseFloat(lohnFeld.value)||0;
+      m.stundenlohnTatsaechlich = parseFloat(satzFeld.value)||0;
+      m.beginn = beginnFeld.value;
+      // Mitarbeiter 1/2 zusätzlich in die ursprünglichen Einzelfelder spiegeln — die werden an vielen
+      // Stellen (Kalkulation, Zeitkonto-Übersicht, Cloud-Sync zur Werkstatt-App) noch direkt gelesen.
+      if(m.id==='m1'){ DB.settings.mitarbeiter1Name=m.name; DB.settings.mitarbeiter1Satz=m.satz; DB.settings.mitarbeiter1Monatslohn=m.monatslohn; DB.settings.mitarbeiter1StundenlohnTatsaechlich=m.stundenlohnTatsaechlich; DB.settings.mitarbeiter1Beginn=m.beginn; }
+      if(m.id==='m2'){ DB.settings.mitarbeiter2Name=m.name; DB.settings.mitarbeiter2Satz=m.satz; DB.settings.mitarbeiter2Monatslohn=m.monatslohn; DB.settings.mitarbeiter2StundenlohnTatsaechlich=m.stundenlohnTatsaechlich; DB.settings.mitarbeiter2Beginn=m.beginn; }
+    });
     await save('settings'); renderMain();
   });
-  el.querySelector('#zk_basis_1')?.addEventListener('change', async e=>{
-    DB.settings.mitarbeiter1BasisStunden = parseFloat(e.target.value)||0;
+  el.querySelectorAll('[id^="zk_basis_"]').forEach(inp=>inp.addEventListener('change', async e=>{
+    const key = e.target.id.replace('zk_basis_', '');
+    const m = DB.settings.mitarbeiterListe.find(x=>x.id===key);
+    if(!m) return;
+    m.basisStunden = parseFloat(e.target.value)||0;
+    if(key==='m1') DB.settings.mitarbeiter1BasisStunden = m.basisStunden;
+    if(key==='m2') DB.settings.mitarbeiter2BasisStunden = m.basisStunden;
     await save('settings'); renderMain();
-  });
-  el.querySelector('#zk_basis_2')?.addEventListener('change', async e=>{
-    DB.settings.mitarbeiter2BasisStunden = parseFloat(e.target.value)||0;
+  }));
+  el.querySelectorAll('[id^="zk_sollmonat_"]').forEach(inp=>inp.addEventListener('change', async e=>{
+    const key = e.target.id.replace('zk_sollmonat_', '');
+    const m = DB.settings.mitarbeiterListe.find(x=>x.id===key);
+    if(!m) return;
+    m.sollMonatManuell = e.target.value;
+    if(key==='m1') DB.settings.mitarbeiter1SollMonatManuell = e.target.value;
+    if(key==='m2') DB.settings.mitarbeiter2SollMonatManuell = e.target.value;
     await save('settings'); renderMain();
-  });
-  el.querySelector('#zk_sollmonat_1')?.addEventListener('change', async e=>{
-    DB.settings.mitarbeiter1SollMonatManuell = e.target.value;
-    await save('settings'); renderMain();
-  });
-  el.querySelector('#zk_sollmonat_2')?.addEventListener('change', async e=>{
-    DB.settings.mitarbeiter2SollMonatManuell = e.target.value;
-    await save('settings'); renderMain();
-  });
+  }));
   el.querySelectorAll('[data-zk-reset-sollmonat]').forEach(link=>link.addEventListener('click', async e=>{
     e.preventDefault();
     const key = e.currentTarget.dataset.zkResetSollmonat;
-    DB.settings[`mitarbeiter${key}SollMonatManuell`] = null;
+    const m = DB.settings.mitarbeiterListe.find(x=>x.id===key);
+    if(m) m.sollMonatManuell = null;
+    if(key==='m1') DB.settings.mitarbeiter1SollMonatManuell = null;
+    if(key==='m2') DB.settings.mitarbeiter2SollMonatManuell = null;
     await save('settings'); renderMain();
   }));
 }
@@ -3953,22 +4235,42 @@ function renderNachkalkulation(el){
   const nurMaterialGesamtSoll = geplant.materialNetto+geplant.kantenKosten+geplant.zusatzKosten+geplant.lieferkostenBetrag+geplant.kleinmaterialBetrag;
   const materialGesamtIst = nurMaterialGesamtIst + beschlagGesamtIst;
   const materialGesamtSoll = geplant.materialNetto+geplant.kantenKosten+geplant.beschlagKosten+geplant.zusatzKosten+geplant.lieferkostenBetrag+geplant.kleinmaterialBetrag;
-  const zeitGesamtIst = nk.nurGesamtstundenModus
+  const weitereMitarbeiterFuerNk2 = (DB.settings.mitarbeiterListe||[]).filter(m=>m.id!=='m1' && m.id!=='m2');
+  const summeWeitereIst2 = r => Object.values(r.weitereStunden||{}).reduce((a,b)=>a+(b||0),0);
+  const kostenWeitereIst2 = r => weitereMitarbeiterFuerNk2.reduce((s,m)=>s+((r.weitereStunden?.[m.id]||0)*(m.satz||0)),0);
+  const bmWeitereIstGesamt2 = weitereMitarbeiterFuerNk2.reduce((s,m)=>s+(nk.baustellenmontageIstWeitere?.[m.id]||0),0);
+  const bmWeitereIstKosten2 = weitereMitarbeiterFuerNk2.reduce((s,m)=>s+((nk.baustellenmontageIstWeitere?.[m.id]||0)*(m.satz||0)),0);
+  // Baustellenmontage separat ausgewiesen (eigener Stundensatz) statt nur in der Gesamt-Arbeitszeit enthalten.
+  const bmStundenIstAnzeige = (parseFloat(nk.baustellenmontageIst)||0) + (parseFloat(nk.baustellenmontageIst2)||0) + bmWeitereIstGesamt2;
+  const bmKostenIstAnzeige = ((parseFloat(nk.baustellenmontageIst)||0)+(parseFloat(nk.baustellenmontageIst2)||0))*(DB.settings.stundensatzBaustelle||DB.settings.stundensatz) + bmWeitereIstKosten2;
+  const zeitGesamtIstRoh = nk.nurGesamtstundenModus
     ? (parseFloat(nk.gesamtstundenDirekt)||0)
-    : nk.azIst.reduce((s,r)=>s+(r.std||0)+(r.std2||0),0) + (parseFloat(nk.oberflaecheIst)||0)+(parseFloat(nk.oberflaecheIst2)||0) + (parseFloat(nk.baustellenmontageIst)||0)+(parseFloat(nk.baustellenmontageIst2)||0);
+    : nk.azIst.reduce((s,r)=>s+(r.std||0)+(r.std2||0)+summeWeitereIst2(r),0) + (parseFloat(nk.oberflaecheIst)||0)+(parseFloat(nk.oberflaecheIst2)||0) + (parseFloat(nk.baustellenmontageIst)||0)+(parseFloat(nk.baustellenmontageIst2)||0)+bmWeitereIstGesamt2;
+  // Erst hier, bei der GESAMTSUMME aller Fertigungsschritte, wird auf volle Viertelstunden aufgerundet —
+  // jede einzelne Position bleibt exakt/roh, wie tatsächlich erfasst.
+  const zeitGesamtIst = Math.ceil(zeitGesamtIstRoh*4)/4;
   const zeitGesamtSoll = geplant.zeit;
   const azSollM1Gesamt = Object.values(geplant.azM1||{}).reduce((s,v)=>s+v,0) + geplant.oberflaecheStdM1;
   const azSollM2Gesamt = Object.values(geplant.azM2||{}).reduce((s,v)=>s+v,0) + geplant.oberflaecheStdM2;
+  const azSollWeitereKosten = weitereMitarbeiterFuerNk2.reduce((sum,m)=>{
+    const std = Object.values(geplant.azWeitere||{}).reduce((s,pos)=>s+(pos[m.id]||0),0);
+    return sum + std*(m.satz||0);
+  },0);
   const arbeitszeitGesamtSoll = azSollM1Gesamt*DB.settings.mitarbeiter1Satz + azSollM2Gesamt*DB.settings.mitarbeiter2Satz
-    + geplant.baustellenmontageStd * (DB.settings.stundensatzBaustelle||DB.settings.stundensatz);
+    + geplant.baustellenmontageStd * (DB.settings.stundensatzBaustelle||DB.settings.stundensatz) + azSollWeitereKosten;
   // Tatsächlicher Ist-Gesamtpreis (fehlte bisher komplett — Änderungen bei den Stunden wirkten sich auf keinen angezeigten Preis aus).
   // Wichtig: mit denselben Gewinnzuschlägen je Kategorie rechnen wie die Kalkulation, sonst entsteht eine Lücke zum VK-Preis,
   // auch wenn es gar keine echte Abweichung gibt. Je Mitarbeiter mit dessen eigenem Satz, Baustellenmontage weiterhin mit ihrem eigenen Satz.
-  const arbeitszeitGesamtIst = nk.nurGesamtstundenModus
-    ? zeitGesamtIst * DB.settings.stundensatz
-    : nk.azIst.reduce((s,r)=>s + (r.std||0)*DB.settings.mitarbeiter1Satz + (r.std2||0)*DB.settings.mitarbeiter2Satz, 0)
+  const arbeitszeitGesamtIstRoh = nk.nurGesamtstundenModus
+    ? zeitGesamtIstRoh * DB.settings.stundensatz
+    : nk.azIst.reduce((s,r)=>s + (r.std||0)*DB.settings.mitarbeiter1Satz + (r.std2||0)*DB.settings.mitarbeiter2Satz + kostenWeitereIst2(r), 0)
       + (parseFloat(nk.oberflaecheIst)||0)*DB.settings.mitarbeiter1Satz + (parseFloat(nk.oberflaecheIst2)||0)*DB.settings.mitarbeiter2Satz
-      + ((parseFloat(nk.baustellenmontageIst)||0)+(parseFloat(nk.baustellenmontageIst2)||0)) * (DB.settings.stundensatzBaustelle||DB.settings.stundensatz);
+      + ((parseFloat(nk.baustellenmontageIst)||0)+(parseFloat(nk.baustellenmontageIst2)||0)) * (DB.settings.stundensatzBaustelle||DB.settings.stundensatz)
+      + bmWeitereIstKosten2;
+  // Die Aufrundung auf volle Viertelstunden wird proportional auf den Euro-Betrag übertragen, statt separat
+  // neu zu berechnen — so bleiben Stunden- und Euro-Anzeige immer konsistent, auch bei unterschiedlichen Sätzen.
+  const rundungsFaktorNk = zeitGesamtIstRoh>0 ? zeitGesamtIst/zeitGesamtIstRoh : 1;
+  const arbeitszeitGesamtIst = arbeitszeitGesamtIstRoh * rundungsFaktorNk;
   const materialNettoIst = korpusKostenIst+frontKostenIst+rueckwandKostenIst+zusatzPlattenKostenIst+zusatzPlattenExtraKostenIst;
   const kantenNettoIst = (parseFloat(nk.kantenLfmIst)||0)*DB.settings.kantenpreis;
   const puVerleimungIstAktiv = nk.puVerleimungIst!==undefined && nk.puVerleimungIst!==null ? nk.puVerleimungIst : !!geplant.puVerleimung;
@@ -4113,7 +4415,7 @@ function renderNachkalkulation(el){
         ${nk.zusatzpositionenExtra.map((ex,i)=>{
           const betrag = (ex.menge||0)*(ex.preis||0);
           return `<div class="checkline" style="flex-wrap:wrap;row-gap:4px">
-            <input type="text" style="width:150px" value="${ex.name||''}" data-nkzposx-name="${i}" placeholder="Bezeichnung">
+            <input type="text" style="width:260px" value="${ex.name||''}" data-nkzposx-name="${i}" placeholder="Bezeichnung">
             <span class="small mono" style="margin-left:auto">ungeplant, zusätzlich</span>
             <input type="number" step="0.01" min="0" data-nkzposx-menge="${i}" value="${ex.menge||0}" style="width:55px" title="Menge">
             <span class="small">×</span>
@@ -4198,26 +4500,22 @@ function renderNachkalkulation(el){
             <span class="small">Std.</span>
             <span class="small mono" data-nkaz-stdmin2="${i}" style="opacity:.7;min-width:80px">= ${fmtStdMin(row.std2||0)}</span>
             ${schatten?`<button class="btn btn-ghost btn-sm" data-nkaz-sync-std2="${i}" title="Aktuellen App-Gesamtwert übernehmen (${fmtStdMin(schatten.std2)})">🔄</button>`:''}
+            ${(DB.settings.mitarbeiterListe||[]).filter(m=>m.id!=='m1' && m.id!=='m2').map(m=>{
+              const sollWeitere = geplant.azWeitere?.[row.name]?.[m.id];
+              const istWeitere = row.weitereStunden?.[m.id]||0;
+              const schattenWeitere = schatten?.weitere?.[m.id];
+              return `
+            <span style="flex-basis:100%"></span>
+            <span class="small" style="width:110px;margin-left:24px">👷 ${m.name}</span>
+            <span class="small mono" style="margin-left:auto">${sollWeitere!==undefined?`Soll: ${fmtStdMin(sollWeitere)}`:''}</span>
+            <input type="number" step="0.25" min="0" data-nkaz-weiter="${i}" data-nkaz-weiter-ma="${m.id}" value="${istWeitere}" style="width:75px">
+            <span class="small">Std.</span>
+            <span class="small mono" data-nkaz-stdmin-weiter="${i}-${m.id}" style="opacity:.7;min-width:80px">= ${fmtStdMin(istWeitere)}</span>
+            ${schattenWeitere!==undefined?`<button class="btn btn-ghost btn-sm" data-nkaz-sync-weiter="${i}" data-nkaz-sync-weiter-ma="${m.id}" title="Aktuellen App-Gesamtwert übernehmen (${fmtStdMin(schattenWeitere)})">🔄</button>`:''}`;
+            }).join('')}
           </div>`;}).join('')}
       </div>
       <div class="btn-row" style="margin-top:8px"><button class="btn btn-ghost btn-sm" id="nkaz_add">+ Position</button></div>
-      <div class="checkline" style="flex-wrap:wrap;row-gap:4px">
-        <input type="text" style="width:160px" value="🎨 Oberfläche" disabled>
-        <span style="flex-basis:100%"></span>
-        <span class="small" style="width:110px;margin-left:24px">👷 ${DB.settings.mitarbeiter1Name}</span>
-        <span class="small mono" style="margin-left:auto">Soll: ${fmtStdMin(geplant.oberflaecheStdM1)}</span>
-        <input type="number" step="0.25" min="0" id="nk_ob" value="${nk.oberflaecheIst}" style="width:75px">
-        <span class="small">Std.</span>
-        <span class="small mono" id="nk_ob_stdmin" style="opacity:.7;min-width:80px">= ${fmtStdMin(nk.oberflaecheIst)}</span>
-        ${nk._cloudSchatten?`<button class="btn btn-ghost btn-sm" id="nk_ob_sync" title="Aktuellen App-Gesamtwert übernehmen (${fmtStdMin(nk._cloudSchatten.ob.std)})">🔄</button>`:''}
-        <span style="flex-basis:100%"></span>
-        <span class="small" style="width:110px;margin-left:24px">👷 ${DB.settings.mitarbeiter2Name}</span>
-        <span class="small mono" style="margin-left:auto">Soll: ${fmtStdMin(geplant.oberflaecheStdM2)}</span>
-        <input type="number" step="0.25" min="0" id="nk_ob2" value="${nk.oberflaecheIst2}" style="width:75px">
-        <span class="small">Std.</span>
-        <span class="small mono" id="nk_ob2_stdmin" style="opacity:.7;min-width:80px">= ${fmtStdMin(nk.oberflaecheIst2)}</span>
-        ${nk._cloudSchatten?`<button class="btn btn-ghost btn-sm" id="nk_ob2_sync" title="Aktuellen App-Gesamtwert übernehmen (${fmtStdMin(nk._cloudSchatten.ob.std2)})">🔄</button>`:''}
-      </div>
       <div class="checkline" style="flex-wrap:wrap;row-gap:4px">
         <input type="text" style="width:160px" value="🚐 Baustellenmontage" disabled>
         <span class="small mono" style="margin-left:auto;opacity:.75">eigener Stundensatz: ${fmtEUR(DB.settings.stundensatzBaustelle||DB.settings.stundensatz)}/Std.</span>
@@ -4263,22 +4561,27 @@ function renderNachkalkulation(el){
     <div class="card">
       <h3>🕐 Werkstatt-Verlauf — ${p.name}</h3>
       ${(()=>{
-        const verlauf = (DB.werkstattImportHistorie||[]).filter(h=>h.projId===p.id);
-        if(!verlauf.length) return `<div class="small">Noch keine Werkstatt-Übernahmen — jeder „📲 Werkstatt-Daten importieren"-Vorgang erscheint hier mit Datum, damit erkennbar ist, wann an diesem Auftrag gearbeitet wurde (z. B. bei mehreren Terminen übers Jahr verteilt).</div>`;
+        const verlauf = nk.werkstattVerlauf || [];
+        if(!verlauf.length) return `<div class="small">Noch keine Zeiterfassungen aus der Werkstatt-App — erscheinen hier automatisch (alle 30 Sekunden geprüft, kein Import nötig), inklusive eventueller Notizen.</div>`;
         // Nach Tag + Tätigkeit zusammenfassen, statt jeden einzelnen Werkstatt-Eintrag separat aufzulisten
         const gruppen = {};
-        verlauf.forEach(h=>{
-          const datum = new Date(h.importZeitpunkt).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});
-          (h.schritte.length?h.schritte:[null]).forEach(s=>{
-            const schrittName = s?.name || (h.material.length?'Material':'—');
-            const key = datum+'|'+schrittName;
-            if(!gruppen[key]) gruppen[key] = {datum, schritt:schrittName, std:0, material:[], mitarbeiterSet:new Set()};
-            if(s) gruppen[key].std += s.std;
-            h.material.forEach(m=>gruppen[key].material.push(m));
-            h.mitarbeiterListe.forEach(mi=>gruppen[key].mitarbeiterSet.add(mi));
-          });
+        verlauf.forEach(z=>{
+          const datum = z.datum ? new Date(z.datum).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
+          const key = datum+'|'+z.schritt;
+          if(!gruppen[key]) gruppen[key] = {datum, datumIso:z.datum||'', schritt:z.schritt, std:0, mitarbeiterSet:new Set(), notizen:[], ids:[]};
+          gruppen[key].std += (z.dauerMin||0)/60;
+          if(z.mitarbeiter) gruppen[key].mitarbeiterSet.add(z.mitarbeiter);
+          if(z.notiz) gruppen[key].notizen.push(z.notiz);
+          if(z.id) gruppen[key].ids.push(z.id);
         });
-        const gruppenListe = Object.values(gruppen).sort((x,y)=>y.datum.localeCompare(x.datum));
+        const gruppenListe = Object.values(gruppen).sort((x,y)=>{
+          if(x.datumIso!==y.datumIso) return y.datumIso.localeCompare(x.datumIso);
+          // Bei gleichem Datum: die Gruppe mit dem zuletzt angelegten Eintrag zuerst zeigen (IDs enthalten
+          // einen Zeitstempel-Anteil) — sonst würde der aktuellste Eintrag eines Tages immer ganz unten landen.
+          const xNeuesteId = x.ids.reduce((a,b)=>a>b?a:b, '');
+          const yNeuesteId = y.ids.reduce((a,b)=>a>b?a:b, '');
+          return yNeuesteId.localeCompare(xNeuesteId);
+        });
         const tagesgesamt = {};
         gruppenListe.forEach(g=>{ tagesgesamt[g.datum] = (tagesgesamt[g.datum]||0) + g.std; });
         let letztesDatum = null;
@@ -4290,8 +4593,8 @@ function renderNachkalkulation(el){
             <span style="width:80px;flex-shrink:0"></span>
             <div style="flex:1;min-width:180px">
               <div class="small">${g.schritt}${g.std>0?`: <b>${fmtStdMin(g.std)}</b>`:''}</div>
-              ${g.material.length?g.material.map(m=>`<div class="small">📦 ${m.bezeichnung}: <b>${m.menge}</b></div>`).join(''):''}
               ${g.mitarbeiterSet.size?`<div class="small" style="color:var(--text-muted)">von ${[...g.mitarbeiterSet].join(', ')}</div>`:''}
+              ${g.notizen.length?g.notizen.map(n=>`<div class="small" style="color:var(--accent-dark)">📝 ${escapeHtml(n)}</div>`).join(''):''}
             </div>
           </div>`;}).join('');
       })()}
@@ -4301,7 +4604,7 @@ function renderNachkalkulation(el){
       <h3>📷 Fotos — ${p.name}</h3>
       ${(()=>{
         const projektFotos = DB.fotos.filter(f=>f.projId===p.id).sort((x,y)=>y.datum.localeCompare(x.datum));
-        if(!projektFotos.length) return `<div class="small">Noch keine Fotos — werden über „📲 Werkstatt-Daten importieren" auf der Projekte-Seite aus der Werkstatt-App übernommen.</div>`;
+        if(!projektFotos.length) return `<div class="small">Noch keine Fotos — werden automatisch aus der Werkstatt-App übernommen (alle 30 Sekunden geprüft, kein Import nötig).</div>`;
         return `<div class="fotoGalerie">
           ${projektFotos.map(f=>`<div class="fotoThumb" data-foto-gross="${f.id}">
             <img src="${f.dataUrl}" loading="lazy">
@@ -4326,7 +4629,8 @@ function renderNachkalkulation(el){
       ${(parseFloat(nk.lieferkostenIst)||0)>0?`<div class="kv"><span>Lieferkosten</span><b>${fmtEUR(nk.lieferkostenIst)}</b></div>`:''}
       ${(parseFloat(nk.kleinmaterialIst)||0)>0?`<div class="kv"><span>Kleinmaterial</span><b>${fmtEUR(nk.kleinmaterialIst)}</b></div>`:''}
       ${(parseFloat(nk.baustellenmontageKmIst)||0)>0?`<div class="kv"><span>Kilometerpauschale Bus (${nk.baustellenmontageKmIst} km)</span><b>${fmtEUR((parseFloat(nk.baustellenmontageKmIst)||0)*DB.settings.kmPauschale)}</b></div>`:''}
-      <div class="kv"><span>Arbeitszeit (${fmtStdMin(zeitGesamtIst)})</span><b>${fmtEUR(arbeitszeitGesamtIst)}</b></div>
+      ${bmStundenIstAnzeige>0?`<div class="kv"><span>🚚 Baustellenmontage (${fmtStdMin(bmStundenIstAnzeige)})</span><b>${fmtEUR(bmKostenIstAnzeige)}</b></div>`:''}
+      <div class="kv"><span>Arbeitszeit${bmStundenIstAnzeige>0?' (ohne Baustellenmontage)':''} (${fmtStdMin(zeitGesamtIst-bmStundenIstAnzeige)})</span><b>${fmtEUR(arbeitszeitGesamtIst-bmKostenIstAnzeige)}</b></div>
       ${(parseFloat(nk.zusatzarbeiten)||0)>0?`<div class="kv"><span>Zusatzarbeiten</span><b>${fmtEUR(nk.zusatzarbeiten)}</b></div>`:''}
       <div class="kv" style="opacity:.75"><span>Materialpreis EK (ohne Aufschlag)</span><b>${fmtEUR(materialNettoIst)}</b></div>
       <div class="kv total"><span>Gesamtpreis Nachkalkulation</span><b>${fmtEUR(verkaufspreisIst)}</b></div>
@@ -4348,6 +4652,16 @@ function renderNachkalkulation(el){
       <div class="kv"><span>Differenz NK − VK</span><b class="mono">${fmtEUR(verkaufspreisIst-geplant.kosten)}</b></div>
       <div class="kv" style="border-top:1px dashed var(--border);padding-top:8px;margin-top:6px"><span>Abweichung Material (Ist − Soll)</span><b>${fmtEUR(materialGesamtIst-materialGesamtSoll)}</b></div>
       <div class="kv"><span>Abweichung Arbeitszeit (Ist − Soll)</span><b>${fmtStdMin(zeitGesamtIst-zeitGesamtSoll)} = ${fmtEUR(arbeitszeitGesamtIst-arbeitszeitGesamtSoll)}</b></div>
+      ${(()=>{
+        // Baustellenmontage separat ausweisen, statt nur in der Gesamt-Arbeitszeit unterzugehen — eigener
+        // Stundensatz und eigene Kilometerpauschale machen sie wirtschaftlich zu einer eigenen Position.
+        const bmSollGesamt = geplant.baustellenmontageStd;
+        const bmIstGesamt = (parseFloat(nk.baustellenmontageIst)||0) + (parseFloat(nk.baustellenmontageIst2)||0) + bmWeitereIstGesamt2;
+        const bmSatz = DB.settings.stundensatzBaustelle||DB.settings.stundensatz;
+        const bmKostenSoll = bmSollGesamt*bmSatz;
+        const bmKostenIst = ((parseFloat(nk.baustellenmontageIst)||0)+(parseFloat(nk.baustellenmontageIst2)||0))*bmSatz + bmWeitereIstKosten2;
+        return `<div class="kv" style="padding-left:20px"><span class="small">↳ davon Baustellenmontage</span><b class="small">Soll: ${fmtStdMin(bmSollGesamt)} · Ist: ${fmtStdMin(bmIstGesamt)} (${bmKostenIst-bmKostenSoll>=0?'+':''}${fmtEUR(bmKostenIst-bmKostenSoll)})</b></div>`;
+      })()}
       <div class="kv"><span>Zusatzarbeiten</span><b>${fmtEUR(nk.zusatzarbeiten)}</b></div>
       <div class="kv total"><span>Gesamtabweichung (NK − VK)</span><b>${fmtEUR(verkaufspreisIst-geplant.kosten)}</b></div>
       ${verkaufspreisIst-geplant.kosten>0 ? `<div class="hint warn">💡 Kosten über Plan — Ursache in der Notiz dokumentieren.</div>`
@@ -4525,13 +4839,34 @@ function renderNachkalkulation(el){
     const data = DB.nachkalkulation.find(x=>x.projId===p.id);
     if(!data.zusatzpositionenExtra) data.zusatzpositionenExtra = [];
     data.zusatzpositionenExtra.push({name:'', menge:1, preis:0});
+    const neuerIndex = data.zusatzpositionenExtra.length-1;
     renderMain();
+    // Fokus direkt auf das Namensfeld der neu angelegten Position setzen, damit man sofort tippen
+    // und per Tab-Taste weiter zu Menge und Preis springen kann, ohne extra hinklicken zu müssen.
+    document.querySelector(`[data-nkzposx-name="${neuerIndex}"]`)?.focus();
   });
   el.querySelectorAll('[data-nkzposx-del]').forEach(b=>b.addEventListener('click',e=>{
     nkSpeichernImHintergrund();
     const data = DB.nachkalkulation.find(x=>x.projId===p.id);
     data.zusatzpositionenExtra.splice(+e.target.dataset.nkzposxDel,1);
     renderMain();
+  }));
+  // Tab-Taste bei "Zusätzliche Materialien/Leistungen": von Bezeichnung -> Menge -> Preis weiterspringen.
+  // Nötig, weil der generische change-Handler oben bei jedem Feldwechsel (auch durch Tab) die Seite neu
+  // rendert — dabei würde der Browser sonst den Fokus verlieren, weil das ursprünglich anvisierte nächste
+  // Feld durch ein frisches DOM-Element ersetzt wurde. Hier fangen wir die Tab-Taste selbst ab und setzen
+  // den Fokus nach dem Neu-Rendern gezielt auf das passende Feld.
+  el.querySelectorAll('[data-nkzposx-name], [data-nkzposx-menge]').forEach(inp=>inp.addEventListener('keydown', e=>{
+    if(e.key!=='Tab' || e.shiftKey) return; // Shift+Tab (rückwärts) unangetastet lassen
+    e.preventDefault();
+    const i = inp.dataset.nkzposxName ?? inp.dataset.nkzposxMenge;
+    const zielAttribut = inp.dataset.nkzposxName!==undefined ? 'nkzposxMenge' : 'nkzposxPreis';
+    inp.blur(); // löst change-Handler + Neu-Rendern synchron aus
+    requestAnimationFrame(()=>{
+      const ziel = [...document.querySelectorAll(`[data-${zielAttribut.replace(/([A-Z])/g,'-$1').toLowerCase()}]`)].find(x=>x.dataset[zielAttribut]===i);
+      ziel?.focus();
+      ziel?.select();
+    });
   }));
   el.querySelectorAll('[data-nkzpx-del]').forEach(b=>b.addEventListener('click',e=>{
     nkSpeichernImHintergrund();
@@ -4557,7 +4892,9 @@ function renderNachkalkulation(el){
       const i = inp.dataset.nkazName;
       const stdInp = el.querySelector(`[data-nkaz-std="${i}"]`);
       const std2Inp = el.querySelector(`[data-nkaz-std2="${i}"]`);
-      azIst.push({name: inp.value, std: parseFloat(stdInp?.value)||0, std2: parseFloat(std2Inp?.value)||0});
+      const weitereStunden = {};
+      el.querySelectorAll(`[data-nkaz-weiter="${i}"]`).forEach(w=>{ weitereStunden[w.dataset.nkazWeiterMa] = parseFloat(w.value)||0; });
+      azIst.push({name: inp.value, std: parseFloat(stdInp?.value)||0, std2: parseFloat(std2Inp?.value)||0, weitereStunden});
     });
     const azIstFinal = azFelderGefunden ? azIst : nk.azIst;
     const zusatzPlattenExtra = [];
@@ -4653,7 +4990,7 @@ function renderNachkalkulation(el){
   const stdMinAnzeigeZuordnung = {
     'nk_ob':'nk_ob_stdmin', 'nk_ob2':'nk_ob2_stdmin', 'nk_bm':'nk_bm_stdmin', 'nk_bm2':'nk_bm2_stdmin',
   };
-  const istStundenFeld = t => t.dataset.nkazStd!==undefined || t.dataset.nkazStd2!==undefined || stdMinAnzeigeZuordnung[t.id]!==undefined;
+  const istStundenFeld = t => t.dataset.nkazStd!==undefined || t.dataset.nkazStd2!==undefined || t.dataset.nkazWeiter!==undefined || stdMinAnzeigeZuordnung[t.id]!==undefined;
   el.addEventListener('input', e=>{
     if(window.__nkAutoSaveTimer) clearTimeout(window.__nkAutoSaveTimer);
     window.__nkAutoSaveTimer = setTimeout(nkAutoSaveJetzt, 700);
@@ -4666,6 +5003,9 @@ function renderNachkalkulation(el){
       if(anzeige) anzeige.textContent = `= ${fmtStdMin(parseFloat(e.target.value)||0)}`;
     } else if(stdMinAnzeigeZuordnung[e.target.id]){
       const anzeige = document.getElementById(stdMinAnzeigeZuordnung[e.target.id]);
+      if(anzeige) anzeige.textContent = `= ${fmtStdMin(parseFloat(e.target.value)||0)}`;
+    } else if(e.target.dataset.nkazWeiter!==undefined){
+      const anzeige = el.querySelector(`[data-nkaz-stdmin-weiter="${e.target.dataset.nkazWeiter}-${e.target.dataset.nkazWeiterMa}"]`);
       if(anzeige) anzeige.textContent = `= ${fmtStdMin(parseFloat(e.target.value)||0)}`;
     }
   });
@@ -4687,6 +5027,9 @@ function renderNachkalkulation(el){
         } else if(stdMinAnzeigeZuordnung[e.target.id]){
           const anzeige = document.getElementById(stdMinAnzeigeZuordnung[e.target.id]);
           if(anzeige) anzeige.textContent = `= ${fmtStdMin(aufgerundet)}`;
+        } else if(e.target.dataset.nkazWeiter!==undefined){
+          const anzeige = el.querySelector(`[data-nkaz-stdmin-weiter="${e.target.dataset.nkazWeiter}-${e.target.dataset.nkazWeiterMa}"]`);
+          if(anzeige) anzeige.textContent = `= ${fmtStdMin(aufgerundet)}`;
         }
       }
     }
@@ -4703,7 +5046,7 @@ function renderNachkalkulation(el){
     }
   });
   el.addEventListener('blur', e=>{
-    if(e.target.matches('[data-nkaz-std], [data-nkaz-std2], #nk_ob, #nk_ob2, #nk_bm, #nk_bm2')){
+    if(e.target.matches('[data-nkaz-std], [data-nkaz-std2], #nk_bm, #nk_bm2')){
       e.target.value = rundeViertelstundeAuf(parseFloat(e.target.value)||0);
     }
   }, true);
@@ -4711,11 +5054,10 @@ function renderNachkalkulation(el){
     const gesamtEl = el.querySelector('#nkaz_gesamt');
     if(!gesamtEl || document.activeElement===gesamtEl) return;
     const stdSumme = Array.from(el.querySelectorAll('#nkAzList [data-nkaz-std], #nkAzList [data-nkaz-std2]')).reduce((s,i)=>s+(parseFloat(i.value)||0),0);
-    const obWert = (parseFloat(el.querySelector('#nk_ob')?.value)||0) + (parseFloat(el.querySelector('#nk_ob2')?.value)||0);
     const bmWert = (parseFloat(el.querySelector('#nk_bm')?.value)||0) + (parseFloat(el.querySelector('#nk_bm2')?.value)||0);
-    gesamtEl.value = rundeViertelstunde(stdSumme+obWert+bmWert);
+    gesamtEl.value = rundeViertelstunde(stdSumme+bmWert);
   }
-  el.querySelectorAll('#nkAzList [data-nkaz-std], #nkAzList [data-nkaz-std2], #nk_ob, #nk_ob2, #nk_bm, #nk_bm2').forEach(inp=>inp.addEventListener('input', aktualisiereGesamtstunden));
+  el.querySelectorAll('#nkAzList [data-nkaz-std], #nkAzList [data-nkaz-std2], #nk_bm, #nk_bm2').forEach(inp=>inp.addEventListener('input', aktualisiereGesamtstunden));
   el.querySelector('#nkaz_add')?.addEventListener('click',()=>{
     nkSpeichernImHintergrund();
     const data = DB.nachkalkulation.find(x=>x.projId===p.id);
@@ -4738,14 +5080,14 @@ function renderNachkalkulation(el){
     el.querySelector(`[data-nkaz-std2="${i}"]`).value = wert.toFixed(2);
     nkSpeichernImHintergrund(); await save('nachkalkulation'); renderMain();
   }));
-  el.querySelector('#nk_ob_sync')?.addEventListener('click', async ()=>{
-    el.querySelector('#nk_ob').value = nk._cloudSchatten.ob.std.toFixed(2);
+  el.querySelectorAll('[data-nkaz-sync-weiter]').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const i = btn.dataset.nkazSyncWeiter, maId = btn.dataset.nkazSyncWeiterMa;
+    const row = nk.azIst[i];
+    const wert = nk._cloudSchatten?.az?.[row.name]?.weitere?.[maId];
+    if(wert===undefined) return;
+    el.querySelector(`[data-nkaz-weiter="${i}"][data-nkaz-weiter-ma="${maId}"]`).value = wert.toFixed(2);
     nkSpeichernImHintergrund(); await save('nachkalkulation'); renderMain();
-  });
-  el.querySelector('#nk_ob2_sync')?.addEventListener('click', async ()=>{
-    el.querySelector('#nk_ob2').value = nk._cloudSchatten.ob.std2.toFixed(2);
-    nkSpeichernImHintergrund(); await save('nachkalkulation'); renderMain();
-  });
+  }));
   el.querySelector('#nk_bm_sync')?.addEventListener('click', async ()=>{
     el.querySelector('#nk_bm').value = nk._cloudSchatten.bm.std.toFixed(2);
     nkSpeichernImHintergrund(); await save('nachkalkulation'); renderMain();
@@ -4761,14 +5103,12 @@ function renderNachkalkulation(el){
   el.querySelector('#nkaz_gesamt')?.addEventListener('input',e=>{
     const neuerGesamt = parseFloat(e.target.value)||0;
     const stdInputs = Array.from(el.querySelectorAll('#nkAzList [data-nkaz-std], #nkAzList [data-nkaz-std2]'));
-    const obInput = el.querySelector('#nk_ob');
-    const ob2Input = el.querySelector('#nk_ob2');
     const bmInput = el.querySelector('#nk_bm');
     const bm2Input = el.querySelector('#nk_bm2');
-    const alleInputs = [...stdInputs, obInput, ob2Input, bmInput, bm2Input];
+    const alleInputs = [...stdInputs, bmInput, bm2Input].filter(Boolean); // "Oberfläche" gibt's als eigenes Feld nicht mehr
     const werte = alleInputs.map(i=>parseFloat(i.value)||0);
     const neu = verteileViertelstunden(werte, neuerGesamt);
-    alleInputs.forEach((i,idx)=>{ i.value = neu[idx]; aktualisiereStdMinAnzeige(i); });
+    alleInputs.forEach((i,idx)=>{ i.value = neu[idx]; i.dispatchEvent(new Event('input', {bubbles:true})); });
   });
   el.querySelector('#nk_gesamt_direkt')?.addEventListener('input',e=>{
     nkSpeichernImHintergrund();
@@ -4826,18 +5166,7 @@ function renderEinstellungen(el){
       <h3>💶 Kalkulationsgrundlagen</h3>
       <div class="checkline"><span>Stundensatz</span><input type="number" step="0.5" id="s_stundensatz" value="${s.stundensatz}" style="width:90px;margin-left:auto"><span class="small">€/Std.</span></div>
       <div class="checkline"><span>Stundensatz Baustellenmontage</span><input type="number" step="0.5" id="s_stundensatzBaustelle" value="${s.stundensatzBaustelle}" style="width:90px;margin-left:auto"><span class="small">€/Std.</span></div>
-      <div class="small" style="font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin:12px 0 4px;border-top:1px dashed var(--border);padding-top:10px">👷 Mitarbeiter mit eigenem Stundensatz</div>
-      <div class="small" style="margin-bottom:8px">Wird bei der Arbeitszeit in der Kalkulation je Position auswählbar — praktisch, wenn zwei Mitarbeiter mit unterschiedlichem Satz an einem Auftrag arbeiten. <b>Das ist der Verrechnungssatz für die Preiskalkulation</b> (nicht der tatsächliche Lohn) — den tatsächlichen Stundenlohn für das Zeitkonto trägst du unter „⏱️ Arbeitszeit" ein.</div>
-      <div class="field-row-inline" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:8px">
-        <div class="field" style="flex:1;margin:0"><label>Name Mitarbeiter 1</label><input id="s_ma1name" value="${s.mitarbeiter1Name}"></div>
-        <div style="width:90px"><input type="number" step="0.5" id="s_ma1satz" value="${s.mitarbeiter1Satz}"></div>
-        <span class="small" style="padding-bottom:10px">€/Std.</span>
-      </div>
-      <div class="field-row-inline" style="display:flex;gap:10px;align-items:flex-end">
-        <div class="field" style="flex:1;margin:0"><label>Name Mitarbeiter 2</label><input id="s_ma2name" value="${s.mitarbeiter2Name}"></div>
-        <div style="width:90px"><input type="number" step="0.5" id="s_ma2satz" value="${s.mitarbeiter2Satz}"></div>
-        <span class="small" style="padding-bottom:10px">€/Std.</span>
-      </div>
+      <div class="small" style="margin:12px 0;border-top:1px dashed var(--border);padding-top:10px">👷 Name & Verrechnungssatz je Mitarbeiter (inkl. weiterer Mitarbeiter) verwaltest du jetzt zentral unter „⏱️ Arbeitszeit".</div>
       <div class="checkline" style="border-top:1px dashed var(--border);padding-top:10px;margin-top:10px"><span>Kantenpreis</span><input type="number" step="0.1" id="s_kantenpreis" value="${s.kantenpreis}" style="width:90px;margin-left:auto"><span class="small">€/lfm</span></div>
       <div class="checkline"><span>PU-Verleimung: alle</span><input type="number" step="1" id="s_puSchwelle" value="${s.puVerleimungSchwelleLfm}" style="width:70px;margin-left:auto"><span class="small">lfm Kanten =</span><input type="number" step="0.5" id="s_puPreis" value="${s.puVerleimungPreis}" style="width:70px"><span class="small">€</span></div>
       <div class="checkline"><span>Kilometerpauschale (Bus, Baustellenmontage)</span><input type="number" step="0.01" id="s_kmPauschale" value="${s.kmPauschale}" style="width:90px;margin-left:auto"><span class="small">€/km</span></div>
@@ -4953,10 +5282,10 @@ function renderEinstellungen(el){
       ...DB.settings,
       stundensatz:parseFloat(document.getElementById('s_stundensatz').value)||0,
       stundensatzBaustelle:parseFloat(document.getElementById('s_stundensatzBaustelle').value)||0,
-      mitarbeiter1Name:document.getElementById('s_ma1name').value.trim()||'Mitarbeiter 1',
-      mitarbeiter1Satz:parseFloat(document.getElementById('s_ma1satz').value)||0,
-      mitarbeiter2Name:document.getElementById('s_ma2name').value.trim()||'Mitarbeiter 2',
-      mitarbeiter2Satz:parseFloat(document.getElementById('s_ma2satz').value)||0,
+      mitarbeiter1Name:DB.settings.mitarbeiter1Name,
+      mitarbeiter1Satz:DB.settings.mitarbeiter1Satz,
+      mitarbeiter2Name:DB.settings.mitarbeiter2Name,
+      mitarbeiter2Satz:DB.settings.mitarbeiter2Satz,
       kantenpreis:parseFloat(document.getElementById('s_kantenpreis').value)||0,
       puVerleimungSchwelleLfm:parseFloat(document.getElementById('s_puSchwelle').value)||130,
       puVerleimungPreis:parseFloat(document.getElementById('s_puPreis').value)||0,
