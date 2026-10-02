@@ -4485,7 +4485,11 @@ function renderNachkalkulation(el){
           return `
           <div class="checkline" style="flex-wrap:wrap;row-gap:4px">
             <input type="text" style="width:160px" value="${row.name}" data-nkaz-name="${i}" placeholder="Positionsname">
-            <button class="btn btn-ghost btn-sm" data-nkaz-del="${i}" style="margin-left:auto">✕</button>
+            <span style="margin-left:auto;display:flex;gap:4px">
+              <button class="btn btn-ghost btn-sm" data-nkaz-up="${i}" ${i===0?'disabled':''}>↑</button>
+              <button class="btn btn-ghost btn-sm" data-nkaz-down="${i}" ${i===nk.azIst.length-1?'disabled':''}>↓</button>
+              <button class="btn btn-ghost btn-sm" data-nkaz-del="${i}">✕</button>
+            </span>
             <span style="flex-basis:100%"></span>
             <span class="small" style="width:110px;margin-left:24px">👷 ${DB.settings.mitarbeiter1Name}</span>
             <span class="small mono" style="margin-left:auto">${geplant.azM1?.[row.name]!==undefined?`Soll: ${fmtStdMin(geplant.azM1[row.name])}`:''}</span>
@@ -5129,6 +5133,22 @@ function renderNachkalkulation(el){
     nkSpeichernImHintergrund();
     const data = DB.nachkalkulation.find(x=>x.projId===p.id);
     data.azIst.splice(+e.target.dataset.nkazDel,1);
+    renderMain();
+  }));
+  el.querySelectorAll('[data-nkaz-up]').forEach(b=>b.addEventListener('click',e=>{
+    const i = +e.target.dataset.nkazUp;
+    if(i<=0) return;
+    nkSpeichernImHintergrund();
+    const data = DB.nachkalkulation.find(x=>x.projId===p.id);
+    [data.azIst[i-1], data.azIst[i]] = [data.azIst[i], data.azIst[i-1]];
+    renderMain();
+  }));
+  el.querySelectorAll('[data-nkaz-down]').forEach(b=>b.addEventListener('click',e=>{
+    const i = +e.target.dataset.nkazDown;
+    nkSpeichernImHintergrund();
+    const data = DB.nachkalkulation.find(x=>x.projId===p.id);
+    if(i>=data.azIst.length-1) return;
+    [data.azIst[i+1], data.azIst[i]] = [data.azIst[i], data.azIst[i+1]];
     renderMain();
   }));
   el.querySelectorAll('[data-foto-gross]').forEach(t=>t.querySelector('img').addEventListener('click',()=>{
