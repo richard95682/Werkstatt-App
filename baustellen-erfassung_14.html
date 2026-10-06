@@ -775,6 +775,7 @@ function renderTopbar(){
         <div>
           <div class="label">Aktiver Auftrag</div>
           <div class="name">${escapeHtml(a.name)}</div>
+          ${a.kunde?`<div class="label" style="margin-top:2px;text-transform:none;letter-spacing:0">Kunde: ${escapeHtml(a.kunde)}</div>`:''}
         </div>
         <div class="chev">Wechseln ›</div>
       </div>
