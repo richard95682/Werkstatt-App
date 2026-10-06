@@ -312,10 +312,10 @@ function cloudAuftraegeListenerStarten(){
       const bestehend = DB.auftraege.find(a=>a.id===cloudAuftrag.id);
       if(bestehend){
         bestehend.name = cloudAuftrag.name; bestehend.kunde = cloudAuftrag.kunde; bestehend.status = cloudAuftrag.status||'Kalkulation';
-        bestehend.sollProSchritt = cloudAuftrag.sollProSchritt||{};
+        bestehend.sollProSchritt = cloudAuftrag.sollProSchritt||{}; bestehend.schrittReihenfolge = cloudAuftrag.schrittReihenfolge||[];
         bestehend.materialien = cloudAuftrag.materialien||[]; bestehend.beschlaege = cloudAuftrag.beschlaege||[];
       } else {
-        DB.auftraege.push({id:cloudAuftrag.id, name:cloudAuftrag.name, kunde:cloudAuftrag.kunde, status:cloudAuftrag.status||'Kalkulation', sollProSchritt:cloudAuftrag.sollProSchritt||{}, materialien:cloudAuftrag.materialien||[], beschlaege:cloudAuftrag.beschlaege||[]});
+        DB.auftraege.push({id:cloudAuftrag.id, name:cloudAuftrag.name, kunde:cloudAuftrag.kunde, status:cloudAuftrag.status||'Kalkulation', sollProSchritt:cloudAuftrag.sollProSchritt||{}, schrittReihenfolge:cloudAuftrag.schrittReihenfolge||[], materialien:cloudAuftrag.materialien||[], beschlaege:cloudAuftrag.beschlaege||[]});
       }
       geaendert = true;
     });
@@ -393,7 +393,10 @@ function alleSchritte(){
     if(iy===-1) return -1;
     return ix-iy;
   });
-  const grundliste = (a?.sollProSchritt && Object.keys(a.sollProSchritt).length) ? nachVkSortiert(Object.keys(a.sollProSchritt)) : STANDARD_SCHRITTE;
+  // Reihenfolge exakt wie in der VK (von MöbelKalk mitgeschickt); ältere Aufträge ohne Angabe: bisherige Standardreihenfolge
+  const vkReihenfolge = (a?.schrittReihenfolge||[]).filter(n=>a.sollProSchritt && n in a.sollProSchritt);
+  const sortiert = a?.sollProSchritt ? [...vkReihenfolge, ...nachVkSortiert(Object.keys(a.sollProSchritt).filter(n=>!vkReihenfolge.includes(n)))] : [];
+  const grundliste = sortiert.length ? sortiert : STANDARD_SCHRITTE;
   // Eigene, für DIESEN Auftrag manuell verwendete Sonder-Schritte bleiben zusätzlich bestehen — nur
   // Schritte von einem GANZ ANDEREN Auftrag werden nicht mit übernommen.
   const eigene = [...new Set(DB.zeiten.filter(z=>z.auftragId===a?.id).map(z=>z.schritt).filter(s=>s && !grundliste.includes(s)))];

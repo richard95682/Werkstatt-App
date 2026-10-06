@@ -210,7 +210,7 @@ async function cloudSyncProjekt(p){
     return b ? { name:b.name, sollMenge:menge, einheit:b.einheit||'Stk' } : null;
   }).filter(Boolean);
   await cloudPfad('auftraege').doc(p.id).set({
-    id:p.id, name:p.name, kunde:p.kunde||'', status:p.status||'Kalkulation', sollProSchritt: geplant.az||{}, materialien, beschlaege,
+    id:p.id, name:p.name, kunde:p.kunde||'', status:p.status||'Kalkulation', sollProSchritt: geplant.az||{}, schrittReihenfolge: Object.keys(geplant.az||{}), materialien, beschlaege,
     aktualisiertAm: new Date().toISOString()
   });
 }
