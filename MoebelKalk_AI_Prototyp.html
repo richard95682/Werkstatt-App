@@ -1548,6 +1548,8 @@ function oeffneNkZusammenfassung(){
   const eur = n => fmtEUR(n);
   const std = n => n.toFixed(2).replace('.',',')+' Std.';
   const pct = n => n.toFixed(1).replace('.',',')+' %';
+  const eurStd = n => fmtEUR(n)+'/Std.';
+  const lohn = (betrag, zeit) => zeit>0 ? betrag/zeit : 0; // Ø Stundenlohn (bei mehreren Mitarbeitern mit unterschiedlichen Sätzen gewichtet)
   const vz = (n, hoeherIstGut) => { if(Math.abs(n)<0.005) return ''; return (n>0)===!!hoeherIstGut ? 'zsf-pos' : 'zsf-neg'; };
   // Eine Zeile: Bezeichnung | Soll | Ist | Diff.   (hoeherIstGut: bei Gewinn/Marge ist ein Plus gut, bei Kosten/Zeit schlecht)
   const zeile = (label, soll, ist, fmt, opt={}) => {
@@ -1564,6 +1566,7 @@ function oeffneNkZusammenfassung(){
     return zeile('Verkaufspreis', k.verkaufspreisSoll, k.verkaufspreisIst, eur, {fett:true, prozent:z.diffPreisProzent})
       + zeile('Arbeitszeit', k.zeitSoll, k.zeitIst, std)
       + zeile('Stundenbetrag', k.stundenbetragSoll, k.stundenbetragIst, eur)
+      + zeile('Ø Stundenlohn', lohn(k.stundenbetragSoll,k.zeitSoll), lohn(k.stundenbetragIst,k.zeitIst), eurStd, {klein:true})
       + (k.bmZeitSoll>0||k.bmZeitIst>0 ? zeile('davon Baustelle', k.bmZeitSoll, k.bmZeitIst, std, {klein:true}) : '')
       + zeile('Material inkl. Zuschlag', k.materialInklSoll, k.materialInklIst, eur)
       + zeile('Material EK (ohne Zuschlag)', k.materialSoll, k.materialIst, eur, {klein:true})
@@ -1579,6 +1582,7 @@ function oeffneNkZusammenfassung(){
       zeile('Verkaufspreis', gPreisS, gesamtPreisIst, eur, {fett:true, prozent: gPreisS>=10 ? (gesamtPreisIst-gPreisS)/gPreisS*100 : null})
     + zeile('Arbeitszeit', sum(k=>k.zeitSoll), sum(k=>k.zeitIst), std)
     + zeile('Stundenbetrag', sum(k=>k.stundenbetragSoll), sum(k=>k.stundenbetragIst), eur)
+    + zeile('Ø Stundenlohn', lohn(sum(k=>k.stundenbetragSoll),sum(k=>k.zeitSoll)), lohn(sum(k=>k.stundenbetragIst),sum(k=>k.zeitIst)), eurStd, {klein:true})
     + zeile('davon Baustelle', sum(k=>k.bmZeitSoll), sum(k=>k.bmZeitIst), std, {klein:true})
     + zeile('Material inkl. Zuschlag', sum(k=>k.materialInklSoll), sum(k=>k.materialInklIst), eur)
     + zeile('Material EK (ohne Zuschlag)', sum(k=>k.materialSoll), sum(k=>k.materialIst), eur, {klein:true})
@@ -3587,7 +3591,10 @@ function projektGeplantGesamt(p){
   const out = schraenke.reduce((sum,s)=>{
     const g = s.geplant||{};
     (g.azBreakdown||[]).forEach(pos=>{ sum.az[pos.name] = (sum.az[pos.name]||0) + (pos.std||0); });
-    (g.azBreakdownM1||[]).forEach(pos=>{ sum.azM1[pos.name] = (sum.azM1[pos.name]||0) + (pos.std||0); });
+    // Ältere gespeicherte Kalkulationen kennen noch keine Aufteilung auf Mitarbeiter 1/2 — dann zählen die Stunden komplett zu Mitarbeiter 1,
+    // sonst fehlten sie im Soll-Stundenbetrag der Nachkalkulation.
+    const hatMaAufteilung = (g.azBreakdownM1||[]).length>0 || (g.azBreakdownM2||[]).length>0 || (g.azBreakdownWeitere||[]).length>0;
+    (hatMaAufteilung ? (g.azBreakdownM1||[]) : (g.azBreakdown||[])).forEach(pos=>{ sum.azM1[pos.name] = (sum.azM1[pos.name]||0) + (pos.std||0); });
     (g.azBreakdownM2||[]).forEach(pos=>{ sum.azM2[pos.name] = (sum.azM2[pos.name]||0) + (pos.std||0); });
     (g.azBreakdownWeitere||[]).forEach(pos=>{
       if(!sum.azWeitere[pos.name]) sum.azWeitere[pos.name] = {};
