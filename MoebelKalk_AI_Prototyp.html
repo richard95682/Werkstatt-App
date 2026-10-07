@@ -1259,6 +1259,20 @@ function korpusMasse(k){
   return {breite, hoehe, sockelhoehe};
 }
 
+/* Front-Aufteilung: entweder je Fach (zwischen den Mittelseiten) oder – bei „durchgehender Front“ – eine einzige Fläche über die ganze Breite,
+   die ebenfalls in Höhe aufgeteilt werden kann (Reihen: Front/Schublade/offen). */
+function frontListeVon(k){
+  if(k.durchgehendeFront && k.durchgehendeFront.aktiv){
+    if(!Array.isArray(k.durchgehendeFront.reihen) || !k.durchgehendeFront.reihen.length) k.durchgehendeFront.reihen = [{typ:'front',hoehe:korpusMasse(k).hoehe||1000}];
+    return [k.durchgehendeFront.reihen];
+  }
+  return k.frontFaecher||[];
+}
+function frontFachBreiteVon(k){
+  const km = korpusMasse(k);
+  return (k.durchgehendeFront && k.durchgehendeFront.aktiv) ? km.breite : km.breite/((k.mittelseiten||0)+1);
+}
+
 /* Bauteile-Berechnung */
 function berechneBauteile(k){
   const {tiefe,mittelseiten,fachboedenProFach,konstruktionsboedenProFach,frontFaecher,rueckwand} = k;
@@ -1329,15 +1343,16 @@ function berechneBauteile(k){
   // Frontaufteilung je Fach: pro Reihe wahlweise Front (Tür), Schublade oder offen (kein Material); die eingegebene
   // Höhe ist die Gesamthöhe der Reihe und wird durch die Anzahl (übereinander) geteilt. Die Anzahl (nebeneinander)
   // teilt zusätzlich die Fachbreite auf, damit auch innerhalb eines Fachs mehrere Türen nebeneinander möglich sind.
-  (frontFaecher||[]).forEach((fach,fi)=>{
+  const dFront = !!(k.durchgehendeFront && k.durchgehendeFront.aktiv);
+  frontListeVon(k).forEach((fach,fi)=>{
     (fach||[]).forEach((row,ri)=>{
       if(row.typ==='offen') return; // offenes Fach: kein Bauteil
       const anzH = row.anzahl||1;
       const anzB = row.anzahlBreite||1;
       const hoeheJeStueck = (row.hoehe||0)/anzH;
-      const breiteJeStueck = fachBreite/anzB;
+      const breiteJeStueck = frontFachBreiteVon(k)/anzB;
       const gesamtStueck = anzH*anzB;
-      const label = row.typ==='schublade' ? `Schubladenfront Fach ${fi+1}.${ri+1}` : `Tür Fach ${fi+1}.${ri+1}`;
+      const label = dFront ? (row.typ==='schublade' ? `Schubladenfront durchgehend ${ri+1}` : `Durchgehende Front ${ri+1}`) : (row.typ==='schublade' ? `Schubladenfront Fach ${fi+1}.${ri+1}` : `Tür Fach ${fi+1}.${ri+1}`);
       teile.push({name:label,anzahl:gesamtStueck,b:breiteJeStueck,h:hoeheJeStueck,flaeche:gesamtStueck*m2(breiteJeStueck)*m2(hoeheJeStueck),bereich:'Front',tuerHoehe:hoeheJeStueck,frontTyp:row.typ,kantentyp:'front'});
     });
   });
@@ -2068,6 +2083,10 @@ function renderKalkulation(el){
     <div class="card">
       <h3>🚪 Frontaufteilung je Fach</h3>
       <div class="small" style="margin-bottom:8px">Jedes Fach (Breite automatisch = Gesamtbreite ÷ Fächer) wird in Reihen aufgeteilt (von oben nach unten). Jede Reihe ist wahlweise <b>Front</b> (Tür), <b>Schublade</b> oder <b>offen</b> (offenes Fach, kein Material/Beschlag). Änderst du die Höhe einer Reihe (außer der ersten), wird die Differenz immer von der <b>ersten Reihe</b> im Fach abgezogen bzw. zugegeben. Hat diese erste Reihe eine Anzahl &gt; 1, wird die Änderung automatisch gleichmäßig auf alle Stücke verteilt. Löschst du eine Reihe, wandert ihre Höhe zurück zur ersten Reihe.</div>
+      <div class="checkline" style="padding:6px 0;border-bottom:1px dashed var(--border);margin-bottom:8px;flex-wrap:wrap;gap:14px">
+        <label class="small" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="df_aktiv" ${k.durchgehendeFront?.aktiv?'checked':''}> <b>Durchgehende Front über die gesamte Breite</b> (z. B. Kasten) — statt je Fach; kann trotzdem in der Höhe geteilt werden</label>
+        <label class="small" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="df_ohne" ${(k.durchgehendeFront?.ohneBeschlaege??true)?'checked':''} ${k.durchgehendeFront?.aktiv?'':'disabled'}> ohne Beschläge (Fronten ohne Scharniere/Griffe/Dämpfer)</label>
+      </div>
       <div id="frontFaecherHost"></div>
     </div>
 
@@ -2108,6 +2127,7 @@ function renderKalkulation(el){
 
     <div class="card">
       <h3>⏱️ Arbeitszeit für diese Kalkulation (Std.)</h3>
+      <div id="azHinweis"></div>
       <div id="azList"></div>
       <div class="btn-row" style="margin-top:8px">
         <button class="btn btn-ghost btn-sm" id="az_add">+ Position</button>
@@ -2183,6 +2203,7 @@ function renderKalkulation(el){
   if(!state.kleiderstangenProFach || state.kleiderstangenProFach.length!==state.mittelseiten+1){
     state.kleiderstangenProFach = resizeFachArray(state.kleiderstangenProFach||[], state.mittelseiten+1, 0);
   }
+  if(!state.durchgehendeFront) state.durchgehendeFront = {aktiv:false, ohneBeschlaege:true};
   if(!state.frontFaecher){
     // Rückwärtskompatibilität: ältere gespeicherte Kalkulationen hatten flache Türen/Schubladen-Listen
     if(state.tueren || state.schubladen){
@@ -2290,6 +2311,7 @@ function renderKalkulation(el){
       // daher die "manuell angepasst"-Markierungen zurücksetzen, auch wenn die Werte übernommen wurden.
       neuerSchrank._autoTouched = {};
       neuerSchrank.beschlagQtyManual = {};
+      neuerSchrank._azBasis = {breite:state.breite, hoehe:state.hoehe, tiefe:state.tiefe, mittelseiten:state.mittelseiten}; // Referenz für Hinweis „Arbeitszeit neu vorschlagen“
     } else {
       neuerSchrank = defaultSchrank('Schrank '+(schraenke.length+1));
     }
@@ -2743,6 +2765,7 @@ function renderKalkulation(el){
       Zusammenbau: rund((anzahlKorpusteile*(rw.rwZusammenbauMinStueck||0))/60),
       'CNC-Bearbeitung': rund((bohrpunkte*(rw.rwCncSekBohrpunkt||0))/3600),
     };
+    delete state._azBasis;
     let geaendert = [];
     state.az.forEach(pos=>{
       if(vorschlag[pos.name]!==undefined){ pos.std = vorschlag[pos.name]; geaendert.push(`${pos.name}: ${vorschlag[pos.name]} Std.`); }
@@ -2863,8 +2886,8 @@ function renderKalkulation(el){
     // Ändert sich die Korpushöhe (z.B. durch Sockelhöhe oder Deckenblende), wird die Differenz automatisch
     // von der ersten Reihe jedes Fachs übernommen, damit die Fronthöhe wieder exakt zur Korpushöhe passt.
     const deltaHoehe = Math.round(km.hoehe - altKorpus.hoehe);
-    if(deltaHoehe!==0 && state.frontFaecher){
-      state.frontFaecher.forEach(fach=>{
+    if(deltaHoehe!==0 && (frontListe()||state.durchgehendeFront)){
+      frontListe().forEach(fach=>{
         if(fach && fach.length){ fach[0].hoehe = Math.max(0, Math.round((fach[0].hoehe||0) + deltaHoehe)); }
       });
     }
@@ -2908,6 +2931,22 @@ function renderKalkulation(el){
    'k_anstellL_aktiv','k_anstellL_breite','k_anstellL_anzahl','k_anstellR_aktiv','k_anstellR_breite','k_anstellR_anzahl','k_anstellboden_aktiv','k_anstellboden_mass','k_anstellboden_anzahl','k_anstelldeckel_aktiv','k_anstelldeckel_mass','k_anstelldeckel_anzahl']
     .forEach(id=>el.querySelector('#'+id).addEventListener('input',()=>{ readBasics(); renderFachboeden(); renderKonstruktionsboeden(); renderKleiderstangen(); renderFrontFaecher(); renderBeschlagChecklist(); updateResults(); }));
 
+  function dfAenderung(){
+    state.durchgehendeFront = { aktiv: el.querySelector('#df_aktiv').checked, ohneBeschlaege: el.querySelector('#df_ohne').checked, reihen: state.durchgehendeFront?.reihen };
+    el.querySelector('#df_ohne').disabled = !state.durchgehendeFront.aktiv;
+    if(state.durchgehendeFront.aktiv){
+      // Reihen an die aktuelle Korpushöhe anpassen (Differenz geht in die erste Reihe)
+      const reihen = frontListeVon(state)[0];
+      const diff = Math.round(korpusMasse(state).hoehe - reihen.reduce((a,r)=>a+(r.hoehe||0),0));
+      if(diff!==0) reihen[0].hoehe = Math.max(0, (reihen[0].hoehe||0)+diff);
+    }
+    renderFrontFaecher(); renderBeschlagChecklist(); updateResults();
+  }
+  el.querySelector('#df_aktiv').addEventListener('change', dfAenderung);
+  el.querySelector('#df_ohne').addEventListener('change', dfAenderung);
+
+  function frontListe(){ return frontListeVon(state); }
+  function frontBreite(){ return frontFachBreiteVon(state); }
   function resizeFrontFaecher(arr, len){
     const out = (arr||[]).slice(0,len);
     while(out.length<len) out.push([{typ:'front',hoehe:korpusMasse(state).hoehe||1000}]);
@@ -2932,12 +2971,12 @@ function renderKalkulation(el){
   }
   function renderFrontFaecher(){
     const host = el.querySelector('#frontFaecherHost');
-    const fachBreite = Math.round(korpusMasse(state).breite/(state.mittelseiten+1));
-    host.innerHTML = state.frontFaecher.map((fach,fi)=>{
+    const fachBreite = Math.round(frontBreite());
+    host.innerHTML = frontListe().map((fach,fi)=>{
       const status = fachStatus(fach);
       return `<div style="border:1px dashed var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-          <b class="small">Fach ${fi+1}</b><span class="small mono">Breite ${fachBreite} mm</span>
+          <b class="small">${state.durchgehendeFront?.aktiv?'Durchgehende Front':'Fach '+(fi+1)}</b><span class="small mono">Breite ${fachBreite} mm</span>
           <span class="small mono" data-fach-summary="${fi}" style="margin-left:auto;color:${status.ok?'var(--sage)':'var(--danger)'}">${status.text}</span>
         </div>
         ${fach.map((row,ri)=>{
@@ -2970,7 +3009,7 @@ function renderKalkulation(el){
 
     // Leichte Aktualisierung ohne kompletten Neuaufbau (verhindert Fokusverlust beim Tippen)
     function refreshRestDisplays(){
-      state.frontFaecher.forEach((fach,fi)=>{
+      frontListe().forEach((fach,fi)=>{
         const status = fachStatus(fach);
         const summaryEl = host.querySelector(`[data-fach-summary="${fi}"]`);
         if(summaryEl){
@@ -3002,7 +3041,7 @@ function renderKalkulation(el){
     // Differenz im Platzbedarf einer Reihe von der Reihe direkt darüber abziehen bzw. zugeben
     // Änderungen an jeder Reihe außer der ersten werden immer von der ERSTEN Reihe im Fach abgezogen/zugegeben.
     function delta_uebertragen(fi, ri, altVerbrauch, neuVerbrauch){
-      const fach = state.frontFaecher[fi];
+      const fach = frontListe()[fi];
       const delta = neuVerbrauch - altVerbrauch;
       if(ri===0) return; // die erste Reihe selbst ist die "Quelle" — nichts gleicht sie aus
       const ersteRow = fach[0];
@@ -3011,13 +3050,13 @@ function renderKalkulation(el){
 
     host.querySelectorAll('[data-frow-typ]').forEach(sel=>sel.addEventListener('change',e=>{
       const [fi,ri]=e.target.dataset.frowTyp.split(':').map(Number);
-      state.frontFaecher[fi][ri].typ = e.target.value;
+      frontListe()[fi][ri].typ = e.target.value;
       renderFrontFaecher(); renderBeschlagChecklist(); updateResults();
     }));
     host.querySelectorAll('[data-frow-hoehe]').forEach(inp=>{
       inp.addEventListener('input',e=>{
         const [fi,ri]=e.target.dataset.frowHoehe.split(':').map(Number);
-        const row = state.frontFaecher[fi][ri];
+        const row = frontListe()[fi][ri];
         const altV = verbrauch(row);
         row.hoehe = parseFloat(e.target.value)||0;
         delta_uebertragen(fi, ri, altV, verbrauch(row));
@@ -3027,7 +3066,7 @@ function renderKalkulation(el){
     host.querySelectorAll('[data-frow-anzahl]').forEach(inp=>{
       inp.addEventListener('input',e=>{
         const [fi,ri]=e.target.dataset.frowAnzahl.split(':').map(Number);
-        const row = state.frontFaecher[fi][ri];
+        const row = frontListe()[fi][ri];
         row.anzahl = Math.max(1, parseInt(e.target.value)||1);
         // Gesamthöhe der Reihe bleibt gleich — wird nur neu durch die Anzahl geteilt
         renderFrontFaecher(); renderBeschlagChecklist(); updateResults();
@@ -3036,7 +3075,7 @@ function renderKalkulation(el){
     host.querySelectorAll('[data-frow-anzahlbreite]').forEach(inp=>{
       inp.addEventListener('input',e=>{
         const [fi,ri]=e.target.dataset.frowAnzahlbreite.split(':').map(Number);
-        const row = state.frontFaecher[fi][ri];
+        const row = frontListe()[fi][ri];
         row.anzahlBreite = Math.max(1, parseInt(e.target.value)||1);
         // Fachbreite bleibt gleich — wird nur neu auf die nebeneinander liegenden Stücke geteilt
         renderFrontFaecher(); renderBeschlagChecklist(); updateResults();
@@ -3044,7 +3083,7 @@ function renderKalkulation(el){
     });
     host.querySelectorAll('[data-frow-del]').forEach(b=>b.addEventListener('click',e=>{
       const [fi,ri]=e.target.dataset.frowDel.split(':').map(Number);
-      const fach = state.frontFaecher[fi];
+      const fach = frontListe()[fi];
       const geloescht = fach[ri];
       if(fach.length>1){
         const empfaenger = ri>0 ? fach[0] : fach[1]; // Höhe wandert zurück zur ersten Reihe (bzw. bei Löschen der ersten Reihe an die neue erste)
@@ -3055,7 +3094,7 @@ function renderKalkulation(el){
     }));
     host.querySelectorAll('[data-frow-add]').forEach(b=>b.addEventListener('click',e=>{
       const fi=+e.target.dataset.frowAdd;
-      const fach = state.frontFaecher[fi];
+      const fach = frontListe()[fi];
       const summeBisher = fach.reduce((s,r)=>s+verbrauch(r),0);
       const restHoehe = Math.max(0, Math.round(korpusMasse(state).hoehe - summeBisher));
       fach.push({typ:'front',hoehe:restHoehe,anzahl:1});
@@ -3063,15 +3102,16 @@ function renderKalkulation(el){
     }));
     host.querySelectorAll('[data-frow-even]').forEach(b=>b.addEventListener('click',e=>{
       const fi=+e.target.dataset.frowEven;
-      const rows = state.frontFaecher[fi];
+      const rows = frontListe()[fi];
       if(rows.length){ const each = Math.round(korpusMasse(state).hoehe/rows.length); rows.forEach(r=>{ r.hoehe = each; }); }
       renderFrontFaecher(); renderBeschlagChecklist(); updateResults();
     }));
   }
 
   function empfohleneBeschlagMengen(){
-    const alleReihen = state.frontFaecher.flat();
-    const frontReihen = alleReihen.filter(r=>r.typ==='front');
+    const df = state.durchgehendeFront && state.durchgehendeFront.aktiv;
+    const alleReihen = frontListe().flat();
+    const frontReihen = alleReihen.filter(r=>r.typ==='front' && !(df && state.durchgehendeFront.ohneBeschlaege));
     const schubladenReihen = alleReihen.filter(r=>r.typ==='schublade');
     const scharniere = frontReihen.reduce((sum,r)=>sum+scharnierAnzahl((r.hoehe||0)/(r.anzahl||1))*(r.anzahl||1)*(r.anzahlBreite||1),0);
     const sock = sockelAnzahl(korpusMasse(state).breite, state.mittelseiten);
@@ -3106,7 +3146,7 @@ function renderKalkulation(el){
     if(!state.beschlagQtyManual) state.beschlagQtyManual = {};
     if(!state._autoTouched) state._autoTouched = {};
     // Automatisches Ankreuzen bestimmter Beschlag-Gruppen, sobald sie sinnvoll sind — solange nicht manuell abgewählt
-    const frontReihenAnzahl = state.frontFaecher.flat().filter(r=>r.typ==='front').length;
+    const frontReihenAnzahl = frontListe().flat().filter(r=>r.typ==='front' && !(state.durchgehendeFront?.aktiv && state.durchgehendeFront.ohneBeschlaege)).length;
     function autoCheckGruppe(schluessel, ids, bedingung){
       if(state._autoTouched[schluessel]) return; // Nutzer hat diese Gruppe schon einmal manuell verändert
       if(bedingung){
@@ -3206,14 +3246,14 @@ function renderKalkulation(el){
     // hints
     const hintsHost = el.querySelector('#beschlagHints');
     let hints = [];
-    state.frontFaecher.forEach((fach,fi)=>fach.forEach((row,ri)=>{
-      if(row.typ==='front'){
+    frontListe().forEach((fach,fi)=>fach.forEach((row,ri)=>{
+      if(row.typ==='front' && !(state.durchgehendeFront?.aktiv && state.durchgehendeFront.ohneBeschlaege)){
         const hoeheJeStueck = Math.round((row.hoehe||0)/(row.anzahl||1));
         const gesamtStueck = (row.anzahl||1)*(row.anzahlBreite||1);
         hints.push(`Fach ${fi+1}, Front ${ri+1} · Höhe ${hoeheJeStueck} mm je Stück${gesamtStueck>1?` × ${gesamtStueck} Stück`:''} erkannt → <b>${scharnierAnzahl(hoeheJeStueck)*gesamtStueck} Scharniere</b> empfohlen.`);
       }
     }));
-    const alleFrontSchublade = state.frontFaecher.flat().filter(r=>r.typ!=='offen');
+    const alleFrontSchublade = frontListe().flat().filter(r=>r.typ!=='offen');
     if(!alleFrontSchublade.length){
       hints.push(`Alle Fächer sind offen — keine Front vorhanden.`);
     }
@@ -3222,8 +3262,18 @@ function renderKalkulation(el){
     hintsHost.innerHTML = hints.map(h=>`<div class="hint">💡 ${h}</div>`).join('');
   }
 
+  function pruefeAzHinweis(){
+    const h = el.querySelector('#azHinweis'); if(!h) return;
+    const b = state._azBasis;
+    const abweichend = b && (b.breite!==state.breite || b.hoehe!==state.hoehe || b.tiefe!==state.tiefe || b.mittelseiten!==state.mittelseiten);
+    if(!abweichend){ h.innerHTML=''; return; }
+    h.innerHTML = '<div class="hint" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">📐 Grundmaße gegenüber der Kopie geändert — Arbeitszeit neu vorschlagen? <button class="btn btn-primary btn-sm" id="az_hinweis_ja">Ja, neu vorschlagen</button> <button class="btn btn-ghost btn-sm" id="az_hinweis_nein">Nein, behalten</button></div>';
+    h.querySelector('#az_hinweis_ja').addEventListener('click',()=>{ el.querySelector('#az_vorschlag').click(); });
+    h.querySelector('#az_hinweis_nein').addEventListener('click',()=>{ delete state._azBasis; h.innerHTML=''; updateResults(); });
+  }
   function updateResults(){
     readBasics();
+    pruefeAzHinweis();
     const teile = berechneBauteile(state);
     const korpusFl = flaecheBereich(teile,'Korpus');
     const frontFl = flaecheBereich(teile,'Front');
