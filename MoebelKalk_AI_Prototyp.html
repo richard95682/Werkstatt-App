@@ -2654,13 +2654,17 @@ function renderKalkulation(el){
 
   // Zusätzliche Platten: eigene Platte mit Material- und Kantenauswahl (echte m²- und Kantenberechnung)
   function zusatzPlatteFlaeche(p){ return p.m2Modus ? (p.m2Direkt||0)*(p.anzahl||1) : ((p.breite||0)/1000)*((p.hoehe||0)/1000)*(p.anzahl||1); }
-  function zusatzPlatteKante(p){
+  function zusatzPlatteKanteAuto(p){
     if(p.m2Modus) return 0; // ohne Breite/Höhe lässt sich keine Kantenlänge berechnen
     const bM=(p.breite||0)/1000, hM=(p.hoehe||0)/1000;
     let laenge;
     if(p.umlaufend) laenge = 2*(bM+hM);
     else laenge = (p.laengskanten||0)*Math.max(bM,hM) + (p.stirnkanten||0)*Math.min(bM,hM);
     return laenge*(p.anzahl||1);
+  }
+  // Manuell gesetzte Kantenlänge (Meter gesamt für diese Platte) überschreibt die Automatik
+  function zusatzPlatteKante(p){
+    return (p.kanteManuell!==undefined && p.kanteManuell!==null && !isNaN(p.kanteManuell)) ? p.kanteManuell : zusatzPlatteKanteAuto(p);
   }
   function renderZusatzPlattenListe(){
     if(!state.zusatzPlatten) state.zusatzPlatten = [];
@@ -3406,8 +3410,8 @@ function renderKalkulation(el){
       <div class="card">
         <h3>📋 Bauteilliste (automatisch)</h3>
         <div class="partlist"><table><thead><tr><th>Bauteil</th><th>Anzahl</th><th>Maße (mm)</th><th>Fläche</th><th>Bereich</th><th>Kante gesamt</th></tr></thead>
-        <tbody>${teile.map(t=>`<tr><td>${t.name}</td><td>${t.anzahl}</td><td class="mono">${Math.round(t.b)} × ${Math.round(t.h)}</td><td class="mono">${fmtM2(t.flaeche)}</td><td>${t.bereich}</td><td class="mono" style="white-space:nowrap">${(()=>{ const ueb = state.kantenOverride && state.kantenOverride[t.name]!==undefined; const wert = kantenZeileMeter(t,regelnAktuell,state.kantenOverride); return `<input type="number" step="0.01" min="0" data-kov="${encodeURIComponent(t.name)}" value="${wert.toFixed(2)}" style="width:72px;padding:2px 4px;${ueb?'border-color:var(--accent,#b8864b);font-weight:700':''}" title="${ueb?'Manuell gesetzt (Automatik: '+(kantenLaengeStueck(t,regelnAktuell[t.kantentyp])*t.anzahl).toFixed(2)+' m)':'Automatisch berechnet — Wert ändern zum manuellen Überschreiben'}"> m${ueb?` <button class="btn btn-ghost btn-sm" data-kov-reset="${encodeURIComponent(t.name)}" title="Zurück auf automatisch" style="padding:0 4px">↺</button>`:''}${wert>0 ? ` <button class="btn btn-ghost btn-sm" data-kov-null="${encodeURIComponent(t.name)}" title="Kantenlänge auf 0 setzen (keine Kante)" style="padding:0 5px">0</button>` : ''}`; })()}</td></tr>`).join('')}${(state.zusatzPlatten||[]).map(zp=>`<tr><td>${zp.name||'Zusatzplatte'}</td><td>${zp.anzahl||1}</td><td class="mono">${zp.m2Modus?'nach m²':Math.round(zp.breite||0)+' × '+Math.round(zp.hoehe||0)}</td><td class="mono">${fmtM2(zusatzPlatteFlaeche(zp))}</td><td>Zusatzplatte</td><td class="mono">${zusatzPlatteKante(zp).toFixed(2)} m</td></tr>`).join('')}</tbody></table>
-        <div class="parttotal"><span>Kantenlänge gesamt (inkl. Zusatzplatten)${Object.keys(state.kantenOverride||{}).length?' <span class="small">· ✎ teils manuell</span>':''}</span><span class="mono">${kanten_gesamt.toFixed(2)} m</span></div></div>
+        <tbody>${teile.map(t=>`<tr><td>${t.name}</td><td>${t.anzahl}</td><td class="mono">${Math.round(t.b)} × ${Math.round(t.h)}</td><td class="mono">${fmtM2(t.flaeche)}</td><td>${t.bereich}</td><td class="mono" style="white-space:nowrap">${(()=>{ const ueb = state.kantenOverride && state.kantenOverride[t.name]!==undefined; const wert = kantenZeileMeter(t,regelnAktuell,state.kantenOverride); return `<input type="number" step="0.01" min="0" data-kov="${encodeURIComponent(t.name)}" value="${wert.toFixed(2)}" style="width:72px;padding:2px 4px;${ueb?'border-color:var(--accent,#b8864b);font-weight:700':''}" title="${ueb?'Manuell gesetzt (Automatik: '+(kantenLaengeStueck(t,regelnAktuell[t.kantentyp])*t.anzahl).toFixed(2)+' m)':'Automatisch berechnet — Wert ändern zum manuellen Überschreiben'}"> m${ueb?` <button class="btn btn-ghost btn-sm" data-kov-reset="${encodeURIComponent(t.name)}" title="Zurück auf automatisch" style="padding:0 4px">↺</button>`:''}${wert>0 ? ` <button class="btn btn-ghost btn-sm" data-kov-null="${encodeURIComponent(t.name)}" title="Kantenlänge auf 0 setzen (keine Kante)" style="padding:0 5px">0</button>` : ''}`; })()}</td></tr>`).join('')}${(state.zusatzPlatten||[]).map(zp=>`<tr><td>${zp.name||'Zusatzplatte'}</td><td>${zp.anzahl||1}</td><td class="mono">${zp.m2Modus?'nach m²':Math.round(zp.breite||0)+' × '+Math.round(zp.hoehe||0)}</td><td class="mono">${fmtM2(zusatzPlatteFlaeche(zp))}</td><td>Zusatzplatte</td><td class="mono" style="white-space:nowrap">${(()=>{ const ueb = zp.kanteManuell!==undefined && zp.kanteManuell!==null; const wert = zusatzPlatteKante(zp); return `<input type="number" step="0.01" min="0" data-zkov="${zp.id}" value="${wert.toFixed(2)}" style="width:72px;padding:2px 4px;${ueb?'border-color:var(--accent,#b8864b);font-weight:700':''}" title="${ueb?'Manuell gesetzt (Automatik: '+zusatzPlatteKanteAuto(zp).toFixed(2)+' m)':'Automatisch berechnet — Wert ändern zum manuellen Überschreiben'}"> m${ueb?` <button class="btn btn-ghost btn-sm" data-zkov-reset="${zp.id}" title="Zurück auf automatisch" style="padding:0 4px">↺</button>`:''}${wert>0 ? ` <button class="btn btn-ghost btn-sm" data-zkov-null="${zp.id}" title="Kantenlänge auf 0 setzen" style="padding:0 5px">0</button>` : ''}`; })()}</td></tr>`).join('')}</tbody></table>
+        <div class="parttotal"><span>Kantenlänge gesamt (inkl. Zusatzplatten)${(Object.keys(state.kantenOverride||{}).length || (state.zusatzPlatten||[]).some(z=>z.kanteManuell!==undefined && z.kanteManuell!==null))?' <span class="small">· ✎ teils manuell</span>':''}</span><span class="mono">${kanten_gesamt.toFixed(2)} m</span></div></div>
       </div>
       <div class="grid cols-2">
         <div class="card">
@@ -3461,6 +3465,15 @@ function renderKalkulation(el){
       if(isNaN(v) || (auto!==null && Math.abs(v-auto)<0.005)) delete state.kantenOverride[name]; else state.kantenOverride[name] = Math.max(0,v);
       updateResults();
     }));
+    const zpFinden = id => (state.zusatzPlatten||[]).find(x=>x.id===id);
+    host.querySelectorAll('[data-zkov]').forEach(inp=>inp.addEventListener('change',e=>{
+      const zp = zpFinden(e.target.dataset.zkov); if(!zp) return;
+      const v = parseFloat(String(e.target.value).replace(',','.'));
+      if(isNaN(v) || Math.abs(v-zusatzPlatteKanteAuto(zp))<0.005) delete zp.kanteManuell; else zp.kanteManuell = Math.max(0,v);
+      updateResults();
+    }));
+    host.querySelectorAll('[data-zkov-null]').forEach(b=>b.addEventListener('click',e=>{ const zp=zpFinden(e.currentTarget.dataset.zkovNull); if(zp){ zp.kanteManuell=0; updateResults(); } }));
+    host.querySelectorAll('[data-zkov-reset]').forEach(b=>b.addEventListener('click',e=>{ const zp=zpFinden(e.currentTarget.dataset.zkovReset); if(zp){ delete zp.kanteManuell; updateResults(); } }));
     host.querySelectorAll('[data-kov-null]').forEach(b=>b.addEventListener('click',e=>{
       if(!state.kantenOverride) state.kantenOverride = {};
       state.kantenOverride[decodeURIComponent(e.currentTarget.dataset.kovNull)] = 0;
