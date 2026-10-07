@@ -172,6 +172,7 @@ a.linklike:hover{text-decoration:underline;}
     <input type="file" id="globalCloudRestoreInput" accept=".json" style="display:none">
     <button class="nav-btn" id="globalOrdnerBtn" style="border:1px solid var(--sidebar-line);margin-top:6px;font-size:11px;opacity:.75">📁 Sicherungsordner wählen</button>
     <div class="sidebar-foot" id="speicherHinweis">Lädt …</div>
+    <div id="sicherungsStatus" style="padding:0 12px 10px"></div>
   </div>
   <div class="main" id="main"></div>
 </div>
@@ -928,7 +929,26 @@ async function bereinigeVerwaisteCloudAuftraege(){
   }catch(err){ console.warn('Bereinigung verwaister Cloud-Aufträge fehlgeschlagen:', err); }
 }
 
+function sicherungsAlterTage(){
+  const t = DB.settings && DB.settings.letzteSicherung ? Date.parse(DB.settings.letzteSicherung) : NaN;
+  return isNaN(t) ? null : (Date.now()-t)/86400000;
+}
+function aktualisiereSicherungsHinweis(){
+  const el = document.getElementById('sicherungsStatus');
+  if(!el) return;
+  const d = sicherungsAlterTage();
+  const text = d===null ? 'Noch keine Sicherung' : (d<1 ? 'Letzte Sicherung: heute' : 'Letzte Sicherung: vor '+Math.floor(d)+' Tag'+(Math.floor(d)===1?'':'en'));
+  const warn = d===null || d>=7;
+  el.style.cssText = 'margin-top:8px;padding:6px 8px;border-radius:6px;font-size:11px;line-height:1.3;'+(warn?'background:#8a2b1d;color:#fff;':'background:rgba(255,255,255,.08);');
+  el.innerHTML = (warn?'⚠️ ':'💾 ')+text+(warn?'<br><b>Bitte jetzt sichern</b> (Knopf „Sicherung“)':'');
+}
 async function exportSicherung(){
+  const r = await exportSicherungRoh();
+  try{ DB.settings.letzteSicherung = new Date().toISOString(); await save('settings'); }catch(e){}
+  aktualisiereSicherungsHinweis();
+  return r;
+}
+async function exportSicherungRoh(){
   const datum = new Date().toISOString().slice(0,10);
   const dateiname = `moebelkalk_sicherung_${datum}.json`;
   const inhalt = JSON.stringify(DB,null,2);
@@ -5407,11 +5427,24 @@ function renderEinstellungen(el){
   }
   renderNav();
   renderMain();
+  aktualisiereSicherungsHinweis();
+  setInterval(aktualisiereSicherungsHinweis, 600000);
   sicherungsOrdnerHandle = await ladeSicherungsOrdnerHandle();
   const ordnerBtn = document.getElementById('globalOrdnerBtn');
   if(!HAT_ORDNERZUGRIFF || HAT_CHAT_STORAGE){ ordnerBtn.style.display = 'none'; }
   else if(sicherungsOrdnerHandle){ ordnerBtn.textContent = `📁 Ordner: ${sicherungsOrdnerHandle.name}`; }
   ordnerBtn.addEventListener('click', waehleSicherungsOrdner);
+  // Automatische Tages-Sicherung: beim Programmstart, wenn die letzte Sicherung älter als 1 Tag ist
+  setTimeout(async ()=>{
+    try{
+      const d = sicherungsAlterTage();
+      if(DB.projects.length>0 && !(window.__ladeFehlerKeys && window.__ladeFehlerKeys.size) && (d===null || d>=1)){
+        const r = await exportSicherung();
+        const b = document.getElementById('globalBackupBtn');
+        if(b){ const t=b.textContent; b.textContent = '✓ Auto-Sicherung '+(r.ort==='ordner'?'im Ordner':'heruntergeladen'); setTimeout(()=>{b.textContent=t;},4000); }
+      }
+    }catch(e){ console.warn('Auto-Sicherung fehlgeschlagen', e); }
+  }, 4000);
 
   document.getElementById('globalBackupBtn').addEventListener('click', async (e)=>{
     const btn = e.currentTarget;
