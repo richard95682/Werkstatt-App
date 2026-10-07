@@ -179,6 +179,26 @@ a.linklike:hover{text-decoration:underline;}
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script>
+/* ---------------------------- FEHLERANZEIGE (sichtbar ohne F12) ---------------------------- */
+(function(){
+  const meldungen = [];
+  function zeige(text){
+    meldungen.push(text);
+    let el = document.getElementById('fehlerLeiste');
+    if(!el){
+      el = document.createElement('div'); el.id = 'fehlerLeiste';
+      el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:100000;background:#7a1f12;color:#fff;font:12px/1.4 ui-monospace,Consolas,monospace;padding:8px 12px;max-height:35vh;overflow:auto';
+      document.body.appendChild(el);
+    }
+    el.innerHTML = '<b>⚠️ Programmfehler</b> (bitte Screenshot an Claude) <a href="#" id="fehlerZu" style="color:#fff;float:right">schließen</a><br>' + meldungen.slice(-4).map(m=>m.replace(/</g,'&lt;')).join('<br>');
+    el.querySelector('#fehlerZu').onclick = e=>{ e.preventDefault(); el.remove(); };
+  }
+  window.addEventListener('error', e=>{ if(e.message && !/ResizeObserver|Script error/.test(e.message)) zeige(e.message + ' (Zeile '+e.lineno+')'); });
+  window.addEventListener('unhandledrejection', e=>{ const m = e.reason && (e.reason.message||e.reason); if(m) zeige('Promise: '+m); });
+  window.__zeigeFehler = zeige;
+})();
+</script>
+<script>
 /* ---------------------------- CLOUD-SYNC (Firebase) ---------------------------- */
 const WERKSTATT_ID = 'eqeig2timcdpjoqsr6t7zkkn';
 const firebaseConfig = {
@@ -691,6 +711,9 @@ async function loadAll(){
       DB[key] = wert ? JSON.parse(wert) : JSON.parse(JSON.stringify(DEFAULTS[key]));
     }catch(e){
       DB[key] = JSON.parse(JSON.stringify(DEFAULTS[key]));
+      // Wichtig: Beim Lesen ist etwas schiefgegangen -> diesen Schlüssel NICHT mit leeren Standardwerten überschreiben
+      (window.__ladeFehlerKeys = window.__ladeFehlerKeys || new Set()).add(key);
+      if(window.__zeigeFehler) window.__zeigeFehler('Laden fehlgeschlagen für „'+key+'“: '+(e && e.message || e)+' — gespeicherte Daten bleiben unverändert, bitte nichts löschen.');
     }
   }
   // Migration: ältere gespeicherte Einstellungen um neue Felder ergänzen
@@ -775,6 +798,7 @@ async function bereinigeBeschlaegeInZusatzpositionen(){
   if(geaendert) await save('nachkalkulation');
 }
 async function save(key, versuch=1){
+  if(window.__ladeFehlerKeys && window.__ladeFehlerKeys.has(key)) return; // Schutz: Ladefehler -> bestehende Daten nicht mit leeren Werten überschreiben
   try{
     const json = JSON.stringify(DB[key]);
     if(HAT_CHAT_STORAGE) await window.storage.set(key, json);
@@ -1905,7 +1929,7 @@ function renderKalkulation(el){
     <div class="card">
       <h3>🪑 Möbeltyp & Maße</h3>
       <div class="grid cols-2">
-        <div class="field"><label>Möbeltyp</label><select id="k_typ">${['Kleiderschrank','Sideboard','Regal','Küche','Badmöbel','Sondermöbel'].map(t=>`<option ${k.typ===t?'selected':''}>${t}</option>`).join('')}</select></div>
+        <div class="field"><label>Möbeltyp</label><input type="text" id="k_typ" list="k_typListe" value="${String(k.typ||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}" placeholder="frei eingeben oder wählen" autocomplete="off"><datalist id="k_typListe">${['Kleiderschrank','Sideboard','Regal','Küche','Badmöbel','Sondermöbel','Garderobe','Schreibtisch','Vitrine','Wohnwand'].map(t=>`<option value="${t}"></option>`).join('')}</datalist></div>
         <div class="field"><label>Breite (mm)</label><input type="number" id="k_breite" value="${k.breite}"></div>
         <div class="field"><label>Höhe (mm)</label><input type="number" id="k_hoehe" value="${k.hoehe}"></div>
         <div class="field"><label>Tiefe (mm)</label><input type="number" id="k_tiefe" value="${k.tiefe}"></div>
@@ -3458,7 +3482,7 @@ function projektGeplantGesamt(p){
       kleinmaterialBetrag: sum.kleinmaterialBetrag + (g.kleinmaterialBetrag||0),
       zeit: sum.zeit + (g.zeit||0),
       kosten: sum.kosten + (g.kosten||0),
-      az: sum.az, azM1: sum.azM1, azM2: sum.azM2, beschlagQty: sum.beschlagQty, beschlagPreis: sum.beschlagPreis, zusatzPlatten: sum.zusatzPlatten, zusatzpositionen: sum.zusatzpositionen,
+      az: sum.az, azM1: sum.azM1, azM2: sum.azM2, azWeitere: sum.azWeitere, beschlagQty: sum.beschlagQty, beschlagPreis: sum.beschlagPreis, zusatzPlatten: sum.zusatzPlatten, zusatzpositionen: sum.zusatzpositionen,
       materialKorpusId: sum.materialKorpusId, materialFrontId: sum.materialFrontId, materialRueckwandId: sum.materialRueckwandId,
     };
   }, {material:0, materialNetto:0, korpusMaterialKosten:0, frontMaterialKosten:0, rueckwandMaterialKosten:0, zusatzPlattenMaterialKosten:0,
@@ -5379,7 +5403,7 @@ function renderEinstellungen(el){
   if(hinweis){
     hinweis.innerHTML = HAT_CHAT_STORAGE
       ? 'Gespeichert im Chat<br>(Claude-Speicher)'
-      : 'Lokale Datenbank (IndexedDB)<br>Läuft eigenständig in diesem Browser';
+      : 'Lokale Datenbank (IndexedDB)<br>Läuft eigenständig in diesem Browser<br>'+DB.projects.length+' Projekte · '+DB.materials.length+' Materialien · '+DB.beschlaege.length+' Beschläge';
   }
   renderNav();
   renderMain();
