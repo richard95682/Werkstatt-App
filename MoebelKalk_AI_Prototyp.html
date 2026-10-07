@@ -1565,11 +1565,11 @@ function oeffneNkZusammenfassung(){
     const k = z.k;
     return zeile('Verkaufspreis', k.verkaufspreisSoll, k.verkaufspreisIst, eur, {fett:true, prozent:z.diffPreisProzent})
       + zeile('Arbeitszeit', k.zeitSoll, k.zeitIst, std)
-      + zeile('Stundenbetrag', k.stundenbetragSoll, k.stundenbetragIst, eur)
+      + zeile('Stundenbetrag', k.stundenbetragSoll, k.stundenbetragIst, eur, {fett:true})
       + zeile('Ø Stundenlohn', lohn(k.stundenbetragSoll,k.zeitSoll), lohn(k.stundenbetragIst,k.zeitIst), eurStd, {klein:true})
       + (k.bmZeitSoll>0||k.bmZeitIst>0 ? zeile('davon Baustelle', k.bmZeitSoll, k.bmZeitIst, std, {klein:true}) : '')
       + zeile('Material inkl. Zuschlag', k.materialInklSoll, k.materialInklIst, eur)
-      + zeile('Material EK (ohne Zuschlag)', k.materialSoll, k.materialIst, eur, {klein:true})
+      + zeile('Material EK (ohne Zuschlag)', k.materialSoll, k.materialIst, eur, {fett:true})
       + zeile('Gewinn', k.gewinnSoll, k.gewinnIst, eur, {fett:true, gut:true})
       + zeile('Marge', k.margeSollProzent, k.margeIstProzent, pct, {gut:true});
   };
@@ -1581,11 +1581,11 @@ function oeffneNkZusammenfassung(){
   const gesamtRows =
       zeile('Verkaufspreis', gPreisS, gesamtPreisIst, eur, {fett:true, prozent: gPreisS>=10 ? (gesamtPreisIst-gPreisS)/gPreisS*100 : null})
     + zeile('Arbeitszeit', sum(k=>k.zeitSoll), sum(k=>k.zeitIst), std)
-    + zeile('Stundenbetrag', sum(k=>k.stundenbetragSoll), sum(k=>k.stundenbetragIst), eur)
+    + zeile('Stundenbetrag', sum(k=>k.stundenbetragSoll), sum(k=>k.stundenbetragIst), eur, {fett:true})
     + zeile('Ø Stundenlohn', lohn(sum(k=>k.stundenbetragSoll),sum(k=>k.zeitSoll)), lohn(sum(k=>k.stundenbetragIst),sum(k=>k.zeitIst)), eurStd, {klein:true})
     + zeile('davon Baustelle', sum(k=>k.bmZeitSoll), sum(k=>k.bmZeitIst), std, {klein:true})
     + zeile('Material inkl. Zuschlag', sum(k=>k.materialInklSoll), sum(k=>k.materialInklIst), eur)
-    + zeile('Material EK (ohne Zuschlag)', sum(k=>k.materialSoll), sum(k=>k.materialIst), eur, {klein:true})
+    + zeile('Material EK (ohne Zuschlag)', sum(k=>k.materialSoll), sum(k=>k.materialIst), eur, {fett:true})
     + zeile('Gewinn', gGewS, gGewI, eur, {fett:true, gut:true})
     + zeile('Marge', gPreisS?gGewS/gPreisS*100:0, gesamtMargeIst, pct, {gut:true});
   const gesamtBlock = zeilen.length>1 ? block('Gesamt', `alle ${zeilen.length} Projekte`, gesamtRows, 'gesamt') : '';
@@ -1621,7 +1621,7 @@ function oeffneNkZusammenfassung(){
     <h1>📊 Nachkalkulation – Zusammenfassung</h1>
     <p class="sub">${projekte.length} Projekt${projekte.length===1?'':'e'} · erstellt am ${heute}</p>
     <div class="raster">${proj}${gesamtBlock}</div>
-    <p class="sub" style="margin-top:14px">Rote Abweichung = teurer/länger als geplant bzw. weniger Gewinn · grün = besser als geplant. „Material inkl. Zuschlag“ = Platten, Kanten, Beschläge, Zusatzpositionen, Liefer- und Kleinmaterial mit ihren Zuschlägen.</p>
+    <p class="sub" style="margin-top:14px">Rote Abweichung = teurer/länger als geplant bzw. weniger Gewinn · grün = besser als geplant. <b>Fett</b> = Zahlen der Gewinnrechnung (Gewinn = Verkaufspreis − Stundenbetrag − Material EK). „Material inkl. Zuschlag“ = Platten, Kanten, Beschläge, Zusatzpositionen, Liefer- und Kleinmaterial mit ihren Zuschlägen.</p>
     <div class="noprint"><button onclick="window.print()">🖨️ Drucken / Als PDF speichern</button></div>
   </body></html>`;
   const fenster = window.open('', '_blank');
