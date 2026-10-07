@@ -1177,7 +1177,7 @@ function analysiereSchrankFuerRichtwerte(k){
   const frontFl = flaecheBereich(teile,'Front');
   const rueckFl = flaecheBereich(teile,'Rückwand');
   const gesamtFlaeche = korpusFl+frontFl+rueckFl;
-  const kanten = kantenlaenge(teile);
+  const kanten = kantenlaenge(teile, k.kantenOverride);
   const anzahlKorpusteile = teile.filter(t=>t.bereich==='Korpus').reduce((s,t)=>s+(t.anzahl||1),0);
   const frontStueck = teile.filter(t=>t.bereich==='Front').reduce((s,t)=>s+(t.anzahl||1),0);
   // Bohrpunkte näherungsweise aus den gespeicherten Beschlagmengen (Scharnier, Verbinder, Bodenträger, Sockel, Kleiderstangenhalter)
@@ -1268,6 +1268,15 @@ function frontListeVon(k){
   }
   return k.frontFaecher||[];
 }
+/* Einzelbreiten der nebeneinander liegenden Stücke einer Reihe: manuell (row.breiten = alle außer dem letzten, der Rest ergibt sich) oder gleichmäßig */
+function frontBreitenListe(row, fachBreite){
+  if(Array.isArray(row.breiten) && row.breiten.length){
+    const summe = row.breiten.reduce((a,b)=>a+(b||0),0);
+    return [...row.breiten, Math.max(0, fachBreite-summe)];
+  }
+  const n = Math.max(1, row.anzahlBreite||1);
+  return Array.from({length:n},()=>fachBreite/n);
+}
 function frontFachBreiteVon(k){
   const km = korpusMasse(k);
   return (k.durchgehendeFront && k.durchgehendeFront.aktiv) ? km.breite : km.breite/((k.mittelseiten||0)+1);
@@ -1353,6 +1362,13 @@ function berechneBauteile(k){
       const breiteJeStueck = frontFachBreiteVon(k)/anzB;
       const gesamtStueck = anzH*anzB;
       const label = dFront ? (row.typ==='schublade' ? `Schubladenfront durchgehend ${ri+1}` : `Durchgehende Front ${ri+1}`) : (row.typ==='schublade' ? `Schubladenfront Fach ${fi+1}.${ri+1}` : `Tür Fach ${fi+1}.${ri+1}`);
+      if(Array.isArray(row.breiten) && row.breiten.length){
+        // Manuell aufgeteilte Breiten: jedes Stück mit eigenem Maß
+        frontBreitenListe(row, frontFachBreiteVon(k)).forEach((bj,j)=>{
+          teile.push({name:`${label} · Breite ${j+1}`,anzahl:anzH,b:bj,h:hoeheJeStueck,flaeche:anzH*m2(bj)*m2(hoeheJeStueck),bereich:'Front',tuerHoehe:hoeheJeStueck,frontTyp:row.typ,kantentyp:'front'});
+        });
+        return;
+      }
       teile.push({name:label,anzahl:gesamtStueck,b:breiteJeStueck,h:hoeheJeStueck,flaeche:gesamtStueck*m2(breiteJeStueck)*m2(hoeheJeStueck),bereich:'Front',tuerHoehe:hoeheJeStueck,frontTyp:row.typ,kantentyp:'front'});
     });
   });
@@ -1392,9 +1408,14 @@ function kantenLaengeStueck(t, regel){
   const stirnkante = (t.kantentyp==='seite_aussen' || t.kantentyp==='seite_mittel') ? bM : hM;
   return (regel.laengs||0)*laengskante + (regel.stirn||0)*stirnkante;
 }
-function kantenlaenge(teile){
+/* ov = optionale manuelle Kantenlängen je Bauteil (Name → Meter gesamt für diese Zeile), überschreiben die Regel-Berechnung */
+function kantenZeileMeter(t, regeln, ov){
+  if(ov && ov[t.name]!==undefined && ov[t.name]!==null && !isNaN(ov[t.name])) return ov[t.name];
+  return kantenLaengeStueck(t, regeln[t.kantentyp]) * t.anzahl;
+}
+function kantenlaenge(teile, ov){
   const regeln = kantenRegeln();
-  return teile.reduce((sum,t)=> sum + kantenLaengeStueck(t, regeln[t.kantentyp]) * t.anzahl, 0);
+  return teile.reduce((sum,t)=> sum + kantenZeileMeter(t, regeln, ov), 0);
 }
 
 /* ---------------------------- RENDER ROOT ---------------------------- */
@@ -2311,6 +2332,7 @@ function renderKalkulation(el){
       // daher die "manuell angepasst"-Markierungen zurücksetzen, auch wenn die Werte übernommen wurden.
       neuerSchrank._autoTouched = {};
       neuerSchrank.beschlagQtyManual = {};
+      neuerSchrank.kantenOverride = {}; // manuelle Kantenlängen gelten nur für die Originalmaße
       neuerSchrank._azBasis = {breite:state.breite, hoehe:state.hoehe, tiefe:state.tiefe, mittelseiten:state.mittelseiten}; // Referenz für Hinweis „Arbeitszeit neu vorschlagen“
     } else {
       neuerSchrank = defaultSchrank('Schrank '+(schraenke.length+1));
@@ -2748,7 +2770,7 @@ function renderKalkulation(el){
     const frontFl = flaecheBereich(teile,'Front');
     const rueckFl = flaecheBereich(teile,'Rückwand');
     const gesamtFlaeche = korpusFl+frontFl+rueckFl;
-    const kanten = kantenlaenge(teile);
+    const kanten = kantenlaenge(teile, state.kantenOverride);
     const anzahlBauteile = teile.reduce((s,t)=>s+(t.anzahl||1),0);
     const anzahlKorpusteile = teile.filter(t=>t.bereich==='Korpus').reduce((s,t)=>s+(t.anzahl||1),0);
     const frontStueck = teile.filter(t=>t.bereich==='Front').reduce((s,t)=>s+(t.anzahl||1),0);
@@ -2946,6 +2968,14 @@ function renderKalkulation(el){
   el.querySelector('#df_ohne').addEventListener('change', dfAenderung);
 
   function frontListe(){ return frontListeVon(state); }
+  function breitenText(row, fachBreite){
+    if(Array.isArray(row.breiten) && row.breiten.length){
+      const l = frontBreitenListe(row, fachBreite);
+      const rest = fachBreite - row.breiten.reduce((a,b)=>a+(b||0),0);
+      return '→ '+l.map(x=>Math.round(x)).join(' + ')+' mm'+(rest<0?' ⚠️ zu breit (Fachbreite '+fachBreite+' mm)':' (Fachbreite '+fachBreite+' mm)');
+    }
+    return `→ ${Math.round(fachBreite/(row.anzahlBreite||1))} mm je Stück (Fachbreite ${fachBreite} mm)`;
+  }
   function frontBreite(){ return frontFachBreiteVon(state); }
   function resizeFrontFaecher(arr, len){
     const out = (arr||[]).slice(0,len);
@@ -2996,7 +3026,10 @@ function renderKalkulation(el){
             <span style="flex-basis:100%"></span>
             <span class="small" style="margin-left:32px">Nebeneinander in diesem Fach:</span>
             <input type="number" min="1" style="width:52px" value="${anzB}" data-frow-anzahlbreite="${fi}:${ri}" title="Anzahl Türen/Schubladen nebeneinander (Fachbreite wird geteilt)">
-            <span class="small mono" data-frow-breitejestueck="${fi}:${ri}">→ ${breiteJeStueck} mm je Stück (Fachbreite ${fachBreite} mm)</span>
+            <span class="small mono" data-frow-breitejestueck="${fi}:${ri}">${breitenText(row,fachBreite)}</span>
+            <span style="flex-basis:100%"></span>
+            <span class="small" style="margin-left:32px">oder Breiten manuell (mm, mit / getrennt, letzte Breite = Rest):</span>
+            <input type="text" style="width:150px" value="${(row.breiten||[]).join(' / ')}" placeholder="z. B. 600 / 500" data-frow-breiten="${fi}:${ri}" title="Alle Breiten außer der letzten eingeben — die letzte ergibt sich aus der Restbreite. Leer lassen = gleichmäßig.">
             ${row.typ==='front' ? `<span class="small mono" data-frow-scharniere="${fi}:${ri}">${scharnierAnzahl(proStueck(row))} Scharniere${((row.anzahl||1)*anzB)>1?` × ${(row.anzahl||1)*anzB}`:''}</span>` : ''}
           </div>`;
         }).join('')}
@@ -3033,7 +3066,7 @@ function renderKalkulation(el){
           const abEl = host.querySelector(`[data-frow-anzahlbreite="${fi}:${ri}"]`);
           if(abEl && document.activeElement!==abEl) abEl.value = row.anzahlBreite||1;
           const bpsEl = host.querySelector(`[data-frow-breitejestueck="${fi}:${ri}"]`);
-          if(bpsEl) bpsEl.textContent = `→ ${Math.round(fachBreite/(row.anzahlBreite||1))} mm je Stück (Fachbreite ${fachBreite} mm)`;
+          if(bpsEl) bpsEl.textContent = breitenText(row,fachBreite);
         });
       });
     }
@@ -3077,8 +3110,21 @@ function renderKalkulation(el){
         const [fi,ri]=e.target.dataset.frowAnzahlbreite.split(':').map(Number);
         const row = frontListe()[fi][ri];
         row.anzahlBreite = Math.max(1, parseInt(e.target.value)||1);
+        delete row.breiten; // zurück zur gleichmäßigen Teilung
         // Fachbreite bleibt gleich — wird nur neu auf die nebeneinander liegenden Stücke geteilt
         renderFrontFaecher(); renderBeschlagChecklist(); updateResults();
+      });
+    });
+    host.querySelectorAll('[data-frow-breiten]').forEach(inp=>{
+      inp.addEventListener('input',e=>{
+        const [fi,ri]=e.target.dataset.frowBreiten.split(':').map(Number);
+        const row = frontListe()[fi][ri];
+        const zahlen = e.target.value.split(/[\/;,\s]+/).map(x=>parseFloat(x.replace(',','.'))).filter(x=>!isNaN(x) && x>0);
+        if(zahlen.length){ row.breiten = zahlen; row.anzahlBreite = zahlen.length+1; }
+        else { delete row.breiten; }
+        const abEl = host.querySelector(`[data-frow-anzahlbreite="${fi}:${ri}"]`);
+        if(abEl) abEl.value = row.anzahlBreite||1;
+        refreshRestDisplays(); renderBeschlagChecklist(); updateResults();
       });
     });
     host.querySelectorAll('[data-frow-del]').forEach(b=>b.addEventListener('click',e=>{
@@ -3159,7 +3205,6 @@ function renderKalkulation(el){
     autoCheckGruppe('griff', ['b4'], rec.b4>0);
     autoCheckGruppe('auszug', ['b7'], rec.b7>0);
     autoCheckGruppe('bodentraeger', ['b11'], rec.b11>0);
-    autoCheckGruppe('verbinder', DB.beschlaege.filter(b=>b.kategorie==='Verbinder' && b.id!=='b11').map(b=>b.id), rec.b10>0);
     autoCheckGruppe('sockel', ['b12','b13'], state.sockeloption==='mit' && rec.b12>0);
     autoCheckGruppe('kleiderstange', ['b8'], rec.b8>0);
     autoCheckGruppe('kleiderstangenhalter', ['b14'], rec.b14>0);
@@ -3227,7 +3272,7 @@ function renderKalkulation(el){
       if(ids.includes('b12')) state._autoTouched.sockel = true;
       if(ids.includes('b8')) state._autoTouched.kleiderstange = true;
       if(ids.includes('b14')) state._autoTouched.kleiderstangenhalter = true;
-      if(ids.some(id=>DB.beschlaege.find(b=>b.id===id)?.kategorie==='Verbinder' && id!=='b11')) state._autoTouched.verbinder = true;
+      if(ids.includes('b10')) state._autoTouched.verbinder = true;
       if(e.target.checked) ids.forEach(id=>{ state.beschlagQty[id] = rec[id]||1; delete state.beschlagQtyManual[id]; });
       else ids.forEach(id=>{ delete state.beschlagQty[id]; delete state.beschlagQtyManual[id]; });
       renderBeschlagChecklist(); updateResults();
@@ -3278,7 +3323,7 @@ function renderKalkulation(el){
     const korpusFl = flaecheBereich(teile,'Korpus');
     const frontFl = flaecheBereich(teile,'Front');
     const rueckFl = flaecheBereich(teile,'Rückwand');
-    const kanten = kantenlaenge(teile);
+    const kanten = kantenlaenge(teile, state.kantenOverride);
 
     const matK = findMat(state.materialKorpusId), matF = findMat(state.materialFrontId), matR = findMat(state.materialRueckwandId);
     const s = DB.settings;
@@ -3361,8 +3406,8 @@ function renderKalkulation(el){
       <div class="card">
         <h3>📋 Bauteilliste (automatisch)</h3>
         <div class="partlist"><table><thead><tr><th>Bauteil</th><th>Anzahl</th><th>Maße (mm)</th><th>Fläche</th><th>Bereich</th><th>Kante gesamt</th></tr></thead>
-        <tbody>${teile.map(t=>`<tr><td>${t.name}</td><td>${t.anzahl}</td><td class="mono">${Math.round(t.b)} × ${Math.round(t.h)}</td><td class="mono">${fmtM2(t.flaeche)}</td><td>${t.bereich}</td><td class="mono">${(kantenLaengeStueck(t,regelnAktuell[t.kantentyp])*t.anzahl).toFixed(2)} m</td></tr>`).join('')}${(state.zusatzPlatten||[]).map(zp=>`<tr><td>${zp.name||'Zusatzplatte'}</td><td>${zp.anzahl||1}</td><td class="mono">${zp.m2Modus?'nach m²':Math.round(zp.breite||0)+' × '+Math.round(zp.hoehe||0)}</td><td class="mono">${fmtM2(zusatzPlatteFlaeche(zp))}</td><td>Zusatzplatte</td><td class="mono">${zusatzPlatteKante(zp).toFixed(2)} m</td></tr>`).join('')}</tbody></table>
-        <div class="parttotal"><span>Kantenlänge gesamt (inkl. Zusatzplatten)</span><span class="mono">${kanten_gesamt.toFixed(2)} m</span></div></div>
+        <tbody>${teile.map(t=>`<tr><td>${t.name}</td><td>${t.anzahl}</td><td class="mono">${Math.round(t.b)} × ${Math.round(t.h)}</td><td class="mono">${fmtM2(t.flaeche)}</td><td>${t.bereich}</td><td class="mono" style="white-space:nowrap">${(()=>{ const ueb = state.kantenOverride && state.kantenOverride[t.name]!==undefined; const wert = kantenZeileMeter(t,regelnAktuell,state.kantenOverride); return `<input type="number" step="0.01" min="0" data-kov="${encodeURIComponent(t.name)}" value="${wert.toFixed(2)}" style="width:72px;padding:2px 4px;${ueb?'border-color:var(--accent,#b8864b);font-weight:700':''}" title="${ueb?'Manuell gesetzt (Automatik: '+(kantenLaengeStueck(t,regelnAktuell[t.kantentyp])*t.anzahl).toFixed(2)+' m)':'Automatisch berechnet — Wert ändern zum manuellen Überschreiben'}"> m${ueb?` <button class="btn btn-ghost btn-sm" data-kov-reset="${encodeURIComponent(t.name)}" title="Zurück auf automatisch" style="padding:0 4px">↺</button>`:''}${wert>0 ? ` <button class="btn btn-ghost btn-sm" data-kov-null="${encodeURIComponent(t.name)}" title="Kantenlänge auf 0 setzen (keine Kante)" style="padding:0 5px">0</button>` : ''}`; })()}</td></tr>`).join('')}${(state.zusatzPlatten||[]).map(zp=>`<tr><td>${zp.name||'Zusatzplatte'}</td><td>${zp.anzahl||1}</td><td class="mono">${zp.m2Modus?'nach m²':Math.round(zp.breite||0)+' × '+Math.round(zp.hoehe||0)}</td><td class="mono">${fmtM2(zusatzPlatteFlaeche(zp))}</td><td>Zusatzplatte</td><td class="mono">${zusatzPlatteKante(zp).toFixed(2)} m</td></tr>`).join('')}</tbody></table>
+        <div class="parttotal"><span>Kantenlänge gesamt (inkl. Zusatzplatten)${Object.keys(state.kantenOverride||{}).length?' <span class="small">· ✎ teils manuell</span>':''}</span><span class="mono">${kanten_gesamt.toFixed(2)} m</span></div></div>
       </div>
       <div class="grid cols-2">
         <div class="card">
@@ -3407,6 +3452,24 @@ function renderKalkulation(el){
           <div class="kv total"><span>Verkaufspreis</span><b>${fmtEUR(verkaufspreis)}</b></div>
         </div>
       </div>`;
+    host.querySelectorAll('[data-kov]').forEach(inp=>inp.addEventListener('change',e=>{
+      const name = decodeURIComponent(e.target.dataset.kov);
+      const v = parseFloat(String(e.target.value).replace(',','.'));
+      if(!state.kantenOverride) state.kantenOverride = {};
+      const t = teile.find(x=>x.name===name);
+      const auto = t ? kantenLaengeStueck(t,regelnAktuell[t.kantentyp])*t.anzahl : null;
+      if(isNaN(v) || (auto!==null && Math.abs(v-auto)<0.005)) delete state.kantenOverride[name]; else state.kantenOverride[name] = Math.max(0,v);
+      updateResults();
+    }));
+    host.querySelectorAll('[data-kov-null]').forEach(b=>b.addEventListener('click',e=>{
+      if(!state.kantenOverride) state.kantenOverride = {};
+      state.kantenOverride[decodeURIComponent(e.currentTarget.dataset.kovNull)] = 0;
+      updateResults();
+    }));
+    host.querySelectorAll('[data-kov-reset]').forEach(b=>b.addEventListener('click',e=>{
+      delete (state.kantenOverride||{})[decodeURIComponent(e.currentTarget.dataset.kovReset)];
+      updateResults();
+    }));
 
     ['gw_material','gw_kanten','gw_beschlaege'].forEach((id,idx)=>{
       const settingKey = ['gewinnMaterial','gewinnKanten','gewinnBeschlaege'][idx];
