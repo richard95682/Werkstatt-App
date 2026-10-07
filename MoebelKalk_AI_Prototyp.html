@@ -1465,66 +1465,79 @@ function oeffneNkZusammenfassung(){
   const gesamtMargeIst = gesamtPreisIst ? (gesamtGewinnIst/gesamtPreisIst*100) : 0;
   const heute = new Date().toLocaleDateString('de-DE');
   const vzKlasse = n => n>0 ? 'zsf-neg' : (n<0 ? 'zsf-pos' : ''); // bei Preis/Zeit ist ein Plus (über Plan) ungünstig -> rot
+  const eur = n => fmtEUR(n);
+  const std = n => n.toFixed(2).replace('.',',')+' Std.';
+  const pct = n => n.toFixed(1).replace('.',',')+' %';
+  const vz = (n, hoeherIstGut) => { if(Math.abs(n)<0.005) return ''; return (n>0)===!!hoeherIstGut ? 'zsf-pos' : 'zsf-neg'; };
+  // Eine Zeile: Bezeichnung | Soll | Ist | Diff.   (hoeherIstGut: bei Gewinn/Marge ist ein Plus gut, bei Kosten/Zeit schlecht)
+  const zeile = (label, soll, ist, fmt, opt={}) => {
+    const d = ist - soll;
+    const dTxt = (d>=0?'+':'')+fmt(d);
+    return `<tr class="${opt.fett?'fett':''} ${opt.klein?'klein':''}"><td class="lbl">${label}</td><td class="mono">${fmt(soll)}</td><td class="mono">${fmt(ist)}</td><td class="mono ${vz(d,opt.gut)}">${dTxt}${opt.prozent!==undefined&&opt.prozent!==null?` <span class="proz">(${(d>=0?'+':'')+pct(opt.prozent)})</span>`:''}</td></tr>`;
+  };
+  const block = (titel, untertitel, rows, extraKlasse='') => `<section class="proj ${extraKlasse}">
+      <div class="kopf"><div class="titel">${titel}</div>${untertitel?`<div class="unter">${untertitel}</div>`:''}</div>
+      <table><thead><tr><th></th><th>Soll</th><th>Ist</th><th>Abweichung</th></tr></thead><tbody>${rows}</tbody></table>
+    </section>`;
+  const zeilenHtml = z => {
+    const k = z.k;
+    return zeile('Verkaufspreis', k.verkaufspreisSoll, k.verkaufspreisIst, eur, {fett:true, prozent:z.diffPreisProzent})
+      + zeile('Arbeitszeit', k.zeitSoll, k.zeitIst, std)
+      + zeile('Stundenbetrag', k.stundenbetragSoll, k.stundenbetragIst, eur)
+      + (k.bmZeitSoll>0||k.bmZeitIst>0 ? zeile('davon Baustelle', k.bmZeitSoll, k.bmZeitIst, std, {klein:true}) : '')
+      + zeile('Material inkl. Zuschlag', k.materialInklSoll, k.materialInklIst, eur)
+      + zeile('Material EK (ohne Zuschlag)', k.materialSoll, k.materialIst, eur, {klein:true})
+      + zeile('Gewinn', k.gewinnSoll, k.gewinnIst, eur, {fett:true, gut:true})
+      + zeile('Marge', k.margeSollProzent, k.margeIstProzent, pct, {gut:true});
+  };
+  const proj = zeilen.map(z=>block(
+    escapeHtml(z.p.name)+(z.sollUnplausibel?' <span title="Soll-Preis wirkt unvollständig — Kalkulation prüfen" style="color:#c0392b">⚠️</span>':''),
+    escapeHtml(z.p.kunde||'—'), zeilenHtml(z))).join('');
+  const sum = f => summe(z=>f(z.k));
+  const gPreisS = sum(k=>k.verkaufspreisSoll), gGewS = sum(k=>k.gewinnSoll), gGewI = sum(k=>k.gewinnIst);
+  const gesamtRows =
+      zeile('Verkaufspreis', gPreisS, gesamtPreisIst, eur, {fett:true, prozent: gPreisS>=10 ? (gesamtPreisIst-gPreisS)/gPreisS*100 : null})
+    + zeile('Arbeitszeit', sum(k=>k.zeitSoll), sum(k=>k.zeitIst), std)
+    + zeile('Stundenbetrag', sum(k=>k.stundenbetragSoll), sum(k=>k.stundenbetragIst), eur)
+    + zeile('davon Baustelle', sum(k=>k.bmZeitSoll), sum(k=>k.bmZeitIst), std, {klein:true})
+    + zeile('Material inkl. Zuschlag', sum(k=>k.materialInklSoll), sum(k=>k.materialInklIst), eur)
+    + zeile('Material EK (ohne Zuschlag)', sum(k=>k.materialSoll), sum(k=>k.materialIst), eur, {klein:true})
+    + zeile('Gewinn', gGewS, gGewI, eur, {fett:true, gut:true})
+    + zeile('Marge', gPreisS?gGewS/gPreisS*100:0, gesamtMargeIst, pct, {gut:true});
+  const gesamtBlock = zeilen.length>1 ? block('Gesamt', `alle ${zeilen.length} Projekte`, gesamtRows, 'gesamt') : '';
   const html = `<!doctype html><html lang="de"><head><meta charset="utf-8">
     <title>Nachkalkulation – Zusammenfassung</title>
     <style>
-      body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#2b2013;margin:24px;font-size:13px}
-      h1{font-size:18px;margin:0 0 4px 0}
+      body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#2b2013;margin:24px;font-size:13px;background:#fff}
+      h1{font-size:20px;margin:0 0 4px 0}
       .sub{color:#6b5c47;margin:0 0 18px 0;font-size:12px}
+      .raster{display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:16px;align-items:start}
+      .proj{border:1px solid #d9cdb8;border-radius:10px;overflow:hidden;break-inside:avoid;page-break-inside:avoid;background:#fff}
+      .proj.gesamt{border:2px solid #2b2013}
+      .kopf{background:#f5efe4;padding:10px 14px;border-bottom:1px solid #d9cdb8}
+      .gesamt .kopf{background:#2b2013;color:#fff}
+      .titel{font-weight:700;font-size:15px}
+      .unter{font-size:12px;opacity:.75;margin-top:2px}
       table{width:100%;border-collapse:collapse}
-      th,td{padding:6px 8px;text-align:right;border-bottom:1px solid #e6ddd0;white-space:nowrap}
-      th:first-child,td:first-child, th:nth-child(2),td:nth-child(2){text-align:left}
-      thead th{background:#f5efe4;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.02em}
-      tbody tr:nth-child(even){background:#faf7f0}
-      tfoot td{font-weight:700;border-top:2px solid #2b2013;border-bottom:none}
+      th,td{padding:5px 14px;text-align:right;border-bottom:1px solid #eee5d6;white-space:nowrap}
+      th{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#6b5c47;font-weight:700;background:#fcfaf5}
+      td.lbl,th:first-child{text-align:left;white-space:normal}
+      tr.fett td{font-weight:700;background:#faf7f0}
+      tr.klein td{font-size:11.5px;color:#6b5c47}
+      tr:last-child td{border-bottom:none}
+      .proz{font-weight:400;font-size:11px}
       .zsf-pos{color:#2f7d32}
       .zsf-neg{color:#c0392b}
       .mono{font-family:ui-monospace,Consolas,monospace}
+      .gesamtzeile{margin-top:16px}
       .noprint{margin-top:20px}
-      @media print{ .noprint{display:none} body{margin:8mm} }
+      @media print{ @page{size:A4 portrait;margin:10mm} .noprint{display:none} body{margin:0;font-size:11px} .raster{grid-template-columns:1fr 1fr;gap:10px} th,td{padding:3px 8px} }
       button{font:inherit;padding:8px 16px;border-radius:6px;border:1px solid #2b2013;background:#2b2013;color:#fff;cursor:pointer}
     </style></head><body>
     <h1>📊 Nachkalkulation – Zusammenfassung</h1>
     <p class="sub">${projekte.length} Projekt${projekte.length===1?'':'e'} · erstellt am ${heute}</p>
-    <table>
-      <thead><tr>
-        <th>Kunde</th><th>Projekt</th>
-        <th>Preis Soll</th><th>Preis Ist</th><th>Diff. €</th><th>Diff. %</th>
-        <th>Zeit Soll</th><th>Zeit Ist</th><th>Diff. Zeit</th>
-        <th>davon Baustelle Soll</th><th>davon Baustelle Ist</th>
-        <th>Material Soll</th><th>Material Ist</th><th>Diff. Material</th>
-        <th>Gewinn Ist</th><th>Marge Ist</th>
-      </tr></thead>
-      <tbody>
-        ${zeilen.map(z=>`<tr>
-          <td>${escapeHtml(z.p.kunde||'—')}</td><td>${escapeHtml(z.p.name)}${z.sollUnplausibel?' <span title="Soll-Preis wirkt unvollständig — Kalkulation prüfen" style="color:#c0392b">⚠️</span>':''}</td>
-          <td class="mono">${fmtEUR(z.k.verkaufspreisSoll)}</td>
-          <td class="mono">${fmtEUR(z.k.verkaufspreisIst)}</td>
-          <td class="mono ${vzKlasse(z.diffPreis)}">${z.diffPreis>=0?'+':''}${fmtEUR(z.diffPreis)}</td>
-          <td class="mono ${z.diffPreisProzent===null?'':vzKlasse(z.diffPreis)}">${z.diffPreisProzent===null?'Kalkulation prüfen':(z.diffPreisProzent>=0?'+':'')+z.diffPreisProzent.toFixed(1)+' %'}</td>
-          <td class="mono">${z.k.zeitSoll.toFixed(2)} Std.</td>
-          <td class="mono">${z.k.zeitIst.toFixed(2)} Std.</td>
-          <td class="mono ${vzKlasse(z.diffZeit)}">${z.diffZeit>=0?'+':''}${z.diffZeit.toFixed(2)} Std.</td>
-          <td class="mono">${z.k.bmZeitSoll.toFixed(2)} Std.</td>
-          <td class="mono">${z.k.bmZeitIst.toFixed(2)} Std.</td>
-          <td class="mono">${fmtEUR(z.k.materialSoll)}</td>
-          <td class="mono">${fmtEUR(z.k.materialIst)}</td>
-          <td class="mono ${vzKlasse(z.diffMaterial)}">${z.diffMaterial>=0?'+':''}${fmtEUR(z.diffMaterial)}</td>
-          <td class="mono">${fmtEUR(z.k.gewinnIst)}</td>
-          <td class="mono">${z.k.margeIstProzent.toFixed(1)} %</td>
-        </tr>`).join('')}
-      </tbody>
-      <tfoot><tr>
-        <td colspan="2">Gesamt</td>
-        <td class="mono">${fmtEUR(gesamtPreisSoll)}</td>
-        <td class="mono">${fmtEUR(gesamtPreisIst)}</td>
-        <td class="mono ${vzKlasse(gesamtPreisIst-gesamtPreisSoll)}" colspan="2">${fmtEUR(gesamtPreisIst-gesamtPreisSoll)}</td>
-        <td colspan="5"></td>
-        <td colspan="3"></td>
-        <td class="mono">${fmtEUR(gesamtGewinnIst)}</td>
-        <td class="mono">${gesamtMargeIst.toFixed(1)} %</td>
-      </tr></tfoot>
-    </table>
+    <div class="raster">${proj}${gesamtBlock}</div>
+    <p class="sub" style="margin-top:14px">Rote Abweichung = teurer/länger als geplant bzw. weniger Gewinn · grün = besser als geplant. „Material inkl. Zuschlag“ = Platten, Kanten, Beschläge, Zusatzpositionen, Liefer- und Kleinmaterial mit ihren Zuschlägen.</p>
     <div class="noprint"><button onclick="window.print()">🖨️ Drucken / Als PDF speichern</button></div>
   </body></html>`;
   const fenster = window.open('', '_blank');
@@ -3051,7 +3064,6 @@ function renderKalkulation(el){
     // Automatisches Ankreuzen bestimmter Beschlag-Gruppen, sobald sie sinnvoll sind — solange nicht manuell abgewählt
     const frontReihenAnzahl = state.frontFaecher.flat().filter(r=>r.typ==='front').length;
     function autoCheckGruppe(schluessel, ids, bedingung){
-      if(DB.settings.autoHaken && DB.settings.autoHaken[schluessel]===false) return; // Automatik für diese Gruppe deaktiviert
       if(state._autoTouched[schluessel]) return; // Nutzer hat diese Gruppe schon einmal manuell verändert
       if(bedingung){
         if(!ids.some(id=>state.beschlagQty[id]!==undefined)){ ids.forEach(id=>{ state.beschlagQty[id] = rec[id]||0; }); }
@@ -3063,6 +3075,7 @@ function renderKalkulation(el){
     autoCheckGruppe('griff', ['b4'], rec.b4>0);
     autoCheckGruppe('auszug', ['b7'], rec.b7>0);
     autoCheckGruppe('bodentraeger', ['b11'], rec.b11>0);
+    autoCheckGruppe('verbinder', DB.beschlaege.filter(b=>b.kategorie==='Verbinder' && b.id!=='b11').map(b=>b.id), rec.b10>0);
     autoCheckGruppe('sockel', ['b12','b13'], state.sockeloption==='mit' && rec.b12>0);
     autoCheckGruppe('kleiderstange', ['b8'], rec.b8>0);
     autoCheckGruppe('kleiderstangenhalter', ['b14'], rec.b14>0);
@@ -3130,6 +3143,7 @@ function renderKalkulation(el){
       if(ids.includes('b12')) state._autoTouched.sockel = true;
       if(ids.includes('b8')) state._autoTouched.kleiderstange = true;
       if(ids.includes('b14')) state._autoTouched.kleiderstangenhalter = true;
+      if(ids.some(id=>DB.beschlaege.find(b=>b.id===id)?.kategorie==='Verbinder' && id!=='b11')) state._autoTouched.verbinder = true;
       if(e.target.checked) ids.forEach(id=>{ state.beschlagQty[id] = rec[id]||1; delete state.beschlagQtyManual[id]; });
       else ids.forEach(id=>{ delete state.beschlagQty[id]; delete state.beschlagQtyManual[id]; });
       renderBeschlagChecklist(); updateResults();
@@ -3252,8 +3266,8 @@ function renderKalkulation(el){
     host.innerHTML = `
       <div class="card">
         <h3>📋 Bauteilliste (automatisch)</h3>
-        <div class="partlist"><table><thead><tr><th>Bauteil</th><th>Anzahl</th><th>Maße (mm)</th><th>Fläche</th><th>Bereich</th><th>Kante/Stk</th></tr></thead>
-        <tbody>${teile.map(t=>`<tr><td>${t.name}</td><td>${t.anzahl}</td><td class="mono">${Math.round(t.b)} × ${Math.round(t.h)}</td><td class="mono">${fmtM2(t.flaeche)}</td><td>${t.bereich}</td><td class="mono">${kantenLaengeStueck(t,regelnAktuell[t.kantentyp]).toFixed(2)} m</td></tr>`).join('')}</tbody></table>
+        <div class="partlist"><table><thead><tr><th>Bauteil</th><th>Anzahl</th><th>Maße (mm)</th><th>Fläche</th><th>Bereich</th><th>Kante gesamt</th></tr></thead>
+        <tbody>${teile.map(t=>`<tr><td>${t.name}</td><td>${t.anzahl}</td><td class="mono">${Math.round(t.b)} × ${Math.round(t.h)}</td><td class="mono">${fmtM2(t.flaeche)}</td><td>${t.bereich}</td><td class="mono">${(kantenLaengeStueck(t,regelnAktuell[t.kantentyp])*t.anzahl).toFixed(2)} m</td></tr>`).join('')}${(state.zusatzPlatten||[]).map(zp=>`<tr><td>${zp.name||'Zusatzplatte'}</td><td>${zp.anzahl||1}</td><td class="mono">${zp.m2Modus?'nach m²':Math.round(zp.breite||0)+' × '+Math.round(zp.hoehe||0)}</td><td class="mono">${fmtM2(zusatzPlatteFlaeche(zp))}</td><td>Zusatzplatte</td><td class="mono">${zusatzPlatteKante(zp).toFixed(2)} m</td></tr>`).join('')}</tbody></table>
         <div class="parttotal"><span>Kantenlänge gesamt (inkl. Zusatzplatten)</span><span class="mono">${kanten_gesamt.toFixed(2)} m</span></div></div>
       </div>
       <div class="grid cols-2">
@@ -3471,6 +3485,8 @@ function berechneNkKennzahlenVoll(p){
   const arbeitszeitGesamtSoll = azSollM1Gesamt*DB.settings.mitarbeiter1Satz + azSollM2Gesamt*DB.settings.mitarbeiter2Satz
     + geplant.baustellenmontageStd * (DB.settings.stundensatzBaustelle||DB.settings.stundensatz) + azSollWeitereKosten;
   const gewinnSoll = geplant.kosten - materialGesamtSoll - arbeitszeitGesamtSoll;
+  // Materialpreis inkl. Zuschlag (Soll): alles außer Arbeitszeit und Kilometerpauschale — Material, Kanten, Beschläge, Zusatzpositionen, Liefer-/Kleinmaterial jeweils mit ihren Zuschlägen
+  const materialInklSoll = geplant.kosten - arbeitszeitGesamtSoll - (geplant.baustellenmontageKm||0)*DB.settings.kmPauschale;
   const margeSollProzent = geplant.kosten>0 ? (gewinnSoll/geplant.kosten*100) : 0;
 
   const nk = DB.nachkalkulation.find(x=>x.projId===p.id);
@@ -3481,6 +3497,8 @@ function berechneNkKennzahlenVoll(p){
       materialSoll:materialGesamtSoll, materialIst:materialGesamtSoll,
       zeitSoll:zeitGesamtSoll, zeitIst:zeitGesamtSoll,
       bmZeitSoll:geplant.baustellenmontageStd, bmZeitIst:geplant.baustellenmontageStd,
+      stundenbetragSoll:arbeitszeitGesamtSoll, stundenbetragIst:arbeitszeitGesamtSoll,
+      materialInklSoll:materialInklSoll, materialInklIst:materialInklSoll,
       gewinnSoll, gewinnIst:gewinnSoll, margeSollProzent, margeIstProzent:margeSollProzent,
       erfasst:false,
     };
@@ -3569,6 +3587,8 @@ function berechneNkKennzahlenVoll(p){
     materialSoll:materialGesamtSoll, materialIst:materialGesamtIst,
     zeitSoll:zeitGesamtSoll, zeitIst:zeitGesamtIst,
     bmZeitSoll:geplant.baustellenmontageStd, bmZeitIst,
+    stundenbetragSoll:arbeitszeitGesamtSoll, stundenbetragIst:arbeitszeitGesamtIst,
+    materialInklSoll, materialInklIst: verkaufspreisIst - arbeitszeitGesamtIst - zusatzarbeiten - kmIst*DB.settings.kmPauschale,
     gewinnSoll, gewinnIst, margeSollProzent, margeIstProzent,
     erfasst:true,
   };
@@ -4415,7 +4435,7 @@ function renderNachkalkulation(el){
         ${nk.zusatzpositionenExtra.map((ex,i)=>{
           const betrag = (ex.menge||0)*(ex.preis||0);
           return `<div class="checkline" style="flex-wrap:wrap;row-gap:4px">
-            <input type="text" style="width:260px" value="${ex.name||''}" data-nkzposx-name="${i}" placeholder="Bezeichnung">
+            <input type="text" style="width:390px" value="${ex.name||''}" data-nkzposx-name="${i}" placeholder="Bezeichnung">
             <span class="small mono" style="margin-left:auto">ungeplant, zusätzlich</span>
             <input type="number" step="0.01" min="0" data-nkzposx-menge="${i}" value="${ex.menge||0}" style="width:55px" title="Menge">
             <span class="small">×</span>
@@ -5223,12 +5243,6 @@ function renderEinstellungen(el){
       <div id="lernenErgebnisHost" style="margin-top:10px"></div>
     </div>
     <div class="card">
-      <h3>🤖 Automatische Häkchen</h3>
-      <div class="small" style="margin-bottom:8px">Legt fest, welche Beschlag-Positionen in der Kalkulation automatisch angehakt (und bei Wegfall wieder abgehakt) werden. Deaktivierte Positionen bleiben immer rein manuell.</div>
-      <div id="autoHakenHost"></div>
-      <div class="btn-row" style="margin-top:8px"><button class="btn btn-primary btn-sm" id="s_save_autohaken">Speichern</button></div>
-    </div>
-    <div class="card">
       <h3>💾 Datensicherung</h3>
       <p class="small">Automatische Sicherung auf Windows-Dateiebene ist im Web-Prototyp nicht möglich. Nutze stattdessen Export/Import als JSON-Datei.</p>
       <div class="btn-row">
@@ -5283,19 +5297,6 @@ function renderEinstellungen(el){
       alert('Richtwerte aus echten Aufträgen übernommen.');
       renderMain();
     });
-  });
-  const AUTOHAKEN_LABEL = {scharnier:'Topfscharnier-Set', griff:'Möbelgriff', auszug:'Vollauszug Set', bodentraeger:'Bodenträger', sockel:'Sockelfuß + Clip', kleiderstange:'Kleiderstange', kleiderstangenhalter:'Kleiderstangenhalter'};
-  document.getElementById('autoHakenHost').innerHTML = Object.keys(AUTOHAKEN_LABEL).map(schluessel=>`
-    <div class="checkline">
-      <input type="checkbox" class="autohaken-cb" data-ah="${schluessel}" ${s.autoHaken?.[schluessel]!==false?'checked':''}>
-      <span>${AUTOHAKEN_LABEL[schluessel]}</span>
-    </div>`).join('');
-  document.getElementById('s_save_autohaken').addEventListener('click', async ()=>{
-    const neu = {};
-    document.querySelectorAll('.autohaken-cb').forEach(cb=>{ neu[cb.dataset.ah] = cb.checked; });
-    DB.settings.autoHaken = neu;
-    await save('settings');
-    alert('Einstellung für automatische Häkchen gespeichert.');
   });
   el.querySelector('#s_save').addEventListener('click', async ()=>{
     DB.settings = {
