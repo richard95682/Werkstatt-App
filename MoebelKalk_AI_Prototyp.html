@@ -5052,23 +5052,53 @@ function renderNachkalkulation(el){
     data.zusatzpositionenExtra.splice(+e.target.dataset.nkzposxDel,1);
     renderMain();
   }));
-  // Tab-Taste bei "Zusätzliche Materialien/Leistungen": von Bezeichnung -> Menge -> Preis weiterspringen.
-  // Nötig, weil der generische change-Handler oben bei jedem Feldwechsel (auch durch Tab) die Seite neu
-  // rendert — dabei würde der Browser sonst den Fokus verlieren, weil das ursprünglich anvisierte nächste
-  // Feld durch ein frisches DOM-Element ersetzt wurde. Hier fangen wir die Tab-Taste selbst ab und setzen
-  // den Fokus nach dem Neu-Rendern gezielt auf das passende Feld.
-  el.querySelectorAll('[data-nkzposx-name], [data-nkzposx-menge]').forEach(inp=>inp.addEventListener('keydown', e=>{
-    if(e.key!=='Tab' || e.shiftKey) return; // Shift+Tab (rückwärts) unangetastet lassen
+  // Tab-/Shift+Tab-Taste in der Nachkalkulation: Der change-Handler weiter oben rendert die Seite bei jedem
+  // Feldwechsel neu — dabei würde der Browser den Fokus verlieren, weil das ursprünglich anvisierte nächste
+  // Feld durch ein frisches DOM-Element ersetzt wird. Deshalb merken wir uns vorab, welches Feld als nächstes
+  // (bzw. bei Shift+Tab als vorheriges) drankommt, lösen das Verlassen des Feldes aus und setzen den Fokus
+  // nach dem Neu-Rendern gezielt auf dasselbe Feld. Gilt für alle Eingabefelder der Nachkalkulation
+  // (z.B. Zusätzliche Materialien: Bezeichnung -> Menge -> Preis -> nächste Position/Lieferkosten).
+  const tabFeldSchluessel = ziel=>{
+    if(ziel.id) return {sel:`#${CSS.escape(ziel.id)}`, nr:0};
+    const attr = [...ziel.attributes].find(a=>a.name.startsWith('data-'));
+    if(!attr) return null;
+    const alle = [...el.querySelectorAll(`[${attr.name}]`)].filter(x=>x.getAttribute(attr.name)===attr.value);
+    return {sel:`[${attr.name}="${CSS.escape(attr.value)}"]`, nr:Math.max(0, alle.indexOf(ziel))};
+  };
+  el.addEventListener('keydown', e=>{
+    if(e.key!=='Tab' || e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
+    // el wird bei jedem Rendern wiederverwendet — Listener älterer Render-Durchgänge dürfen hier nicht mehr eingreifen
+    if(current!=='nachkalkulation' || meineGeneration!==nkRenderGeneration || p.id!==activeProjectId) return;
+    const t = e.target;
+    if(!t.isConnected) return;
+    if(!t.matches?.('input:not([type=checkbox]):not([type=radio]), select, textarea')) return;
+    // Zusätzliche Materialien/Leistungen: Tab im Preisfeld der LETZTEN Zeile legt gleich die nächste Zeile an
+    // und setzt den Cursor in deren Bezeichnung (nur wenn ein Preis eingetragen wurde — sonst keine Leerzeilen).
+    if(!e.shiftKey && t.dataset.nkzposxPreis!==undefined){
+      const alleX = [...el.querySelectorAll('[data-nkzposx-preis]')];
+      if(alleX[alleX.length-1]===t && (parseFloat(t.value)||0)>0){
+        e.preventDefault();
+        t.blur(); // speichert + rendert neu
+        requestAnimationFrame(()=>document.getElementById('nkzposx_add')?.click()); // fokussiert die neue Bezeichnung
+        return;
+      }
+    }
+    const liste = [...el.querySelectorAll('input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]):not([data-nkzposx-del]):not([data-nkzpx-del])')]
+      .filter(x=>x===t || x.offsetParent!==null); // Löschen-Knöpfe (✕) überspringen — Tab soll direkt zur nächsten Eingabe führen
+    const ziel = liste[liste.indexOf(t) + (e.shiftKey ? -1 : 1)];
+    if(!ziel || t.tabIndex>0) return; // am Rand der Seite / eigene tabindex-Reihenfolge: Browser entscheiden lassen
+    const key = tabFeldSchluessel(ziel);
+    if(!key) return;
     e.preventDefault();
-    const i = inp.dataset.nkzposxName ?? inp.dataset.nkzposxMenge;
-    const zielAttribut = inp.dataset.nkzposxName!==undefined ? 'nkzposxMenge' : 'nkzposxPreis';
-    inp.blur(); // löst change-Handler + Neu-Rendern synchron aus
+    t.blur(); // löst change-Handler + Neu-Rendern synchron aus (falls sich der Wert geändert hat)
     requestAnimationFrame(()=>{
-      const ziel = [...document.querySelectorAll(`[data-${zielAttribut.replace(/([A-Z])/g,'-$1').toLowerCase()}]`)].find(x=>x.dataset[zielAttribut]===i);
-      ziel?.focus();
-      ziel?.select();
+      const kandidaten = [...document.querySelectorAll(key.sel)];
+      const neu = kandidaten[key.nr] || kandidaten[0];
+      if(!neu) return;
+      neu.focus();
+      try{ neu.select?.(); }catch(err){}
     });
-  }));
+  });
   el.querySelectorAll('[data-nkzpx-del]').forEach(b=>b.addEventListener('click',e=>{
     nkSpeichernImHintergrund();
     const data = DB.nachkalkulation.find(x=>x.projId===p.id);
