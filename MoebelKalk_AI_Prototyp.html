@@ -2775,6 +2775,20 @@ function renderKalkulation(el){
     if(e.key!=='Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
     const t = e.target;
     if(current!=='kalkulation' || !t.isConnected) return;
+    // Zusätzliche Materialien (Kalkulation): Tab im Preisfeld springt direkt zur nächsten Position (Gewinnzuschlag wird
+    // übersprungen und bleibt per Klick oder Shift+Tab erreichbar). In der letzten Zeile mit Preis > 0 wird gleich eine neue angelegt.
+    if(t.dataset?.zuPreis!==undefined){
+      const alleP = [...el.querySelectorAll('[data-zu-preis]')];
+      const nr = alleP.indexOf(t);
+      if(nr<alleP.length-1){
+        e.preventDefault();
+        const naechste = el.querySelector(`[data-zu-name="${alleP[nr+1].dataset.zuPreis}"]`);
+        naechste?.focus(); naechste?.select?.();
+      } else if((parseFloat(t.value)||0)>0){
+        e.preventDefault(); el.querySelector('#zusatz_add')?.click();
+      }
+      return;
+    }
     if(t.dataset?.zuGewinn!==undefined){
       const alle = [...el.querySelectorAll('[data-zu-gewinn]')];
       const pos = state.zusatzpositionen?.[+t.dataset.zuGewinn];
