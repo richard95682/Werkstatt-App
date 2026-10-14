@@ -2768,15 +2768,14 @@ function renderKalkulation(el){
     renderZusatzListe(); updateResults();
     [...el.querySelectorAll('[data-zu-name]')].pop()?.focus(); // Cursor direkt in die neue Bezeichnung
   });
-  // Tab im letzten Feld der letzten Zeile legt gleich die nächste Zeile an (nur wenn die Zeile ausgefüllt ist,
-  // damit keine Leerzeilen entstehen). Zusätzliche Materialien: nach dem Gewinnzuschlag (letztes Feld der Zeile,
-  // Preis > 0). Zusatzplatten: nach dem letzten Feld der Zeile (Bezeichnung ausgefüllt).
+  // Tab im letzten Feld der letzten Zeile springt auf den Knopf „+ Position hinzufügen“ bzw. „+ Platte hinzufügen“
+  // (Enter/Leertaste legt dann die nächste Zeile an und setzt den Cursor in deren Bezeichnung).
   el.addEventListener('keydown', e=>{
     if(e.key!=='Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
     const t = e.target;
     if(current!=='kalkulation' || !t.isConnected) return;
     // Zusätzliche Materialien (Kalkulation): Tab im Preisfeld springt direkt zur nächsten Position (Gewinnzuschlag wird
-    // übersprungen und bleibt per Klick oder Shift+Tab erreichbar). In der letzten Zeile mit Preis > 0 wird gleich eine neue angelegt.
+    // übersprungen und bleibt per Klick oder Shift+Tab erreichbar). In der letzten Zeile geht es auf „+ Position hinzufügen“.
     if(t.dataset?.zuPreis!==undefined){
       const alleP = [...el.querySelectorAll('[data-zu-preis]')];
       const nr = alleP.indexOf(t);
@@ -2784,24 +2783,22 @@ function renderKalkulation(el){
         e.preventDefault();
         const naechste = el.querySelector(`[data-zu-name="${alleP[nr+1].dataset.zuPreis}"]`);
         naechste?.focus(); naechste?.select?.();
-      } else if((parseFloat(t.value)||0)>0){
-        e.preventDefault(); el.querySelector('#zusatz_add')?.click();
+      } else {
+        e.preventDefault(); el.querySelector('#zusatz_add')?.focus();
       }
       return;
     }
     if(t.dataset?.zuGewinn!==undefined){
       const alle = [...el.querySelectorAll('[data-zu-gewinn]')];
-      const pos = state.zusatzpositionen?.[+t.dataset.zuGewinn];
-      if(alle[alle.length-1]===t && pos && (pos.preis||0)>0){ e.preventDefault(); el.querySelector('#zusatz_add')?.click(); }
+      if(alle[alle.length-1]===t){ e.preventDefault(); el.querySelector('#zusatz_add')?.focus(); }
       return;
     }
     const zeile = t.closest?.('#zusatzPlattenList > .checkline');
     if(zeile){
       const zeilen = [...el.querySelectorAll('#zusatzPlattenList > .checkline')];
       const felder = [...zeile.querySelectorAll('input:not([disabled])')].filter(x=>x.tabIndex>=0); // Checkboxen/✕ haben tabindex -1 (werden beim Tab übersprungen)
-      const p = state.zusatzPlatten?.[zeilen.indexOf(zeile)];
-      if(zeilen[zeilen.length-1]===zeile && felder[felder.length-1]===t && p && (p.name||'').trim()){
-        e.preventDefault(); el.querySelector('#zplatte_add')?.click();
+      if(zeilen[zeilen.length-1]===zeile && felder[felder.length-1]===t){
+        e.preventDefault(); el.querySelector('#zplatte_add')?.focus();
       }
     }
   });
@@ -5113,28 +5110,41 @@ function renderNachkalkulation(el){
     const t = e.target;
     if(!t.isConnected) return;
     if(!t.matches?.('input:not([type=checkbox]):not([type=radio]), select, textarea')) return;
-    // Zusätzliche Materialien/Leistungen: Tab im Preisfeld der LETZTEN Zeile legt gleich die nächste Zeile an
-    // und setzt den Cursor in deren Bezeichnung (nur wenn ein Preis eingetragen wurde — sonst keine Leerzeilen).
+    // Zusätzliche Materialien/Leistungen: Tab im Preisfeld der LETZTEN Zeile springt auf „+ Position hinzufügen“
+    // (Enter/Leertaste legt dann die nächste Zeile an und setzt den Cursor in deren Bezeichnung).
     if(!e.shiftKey && t.dataset.nkzposxPreis!==undefined){
       const alleX = [...el.querySelectorAll('[data-nkzposx-preis]')];
-      if(alleX[alleX.length-1]===t && (parseFloat(t.value)||0)>0){
+      if(alleX[alleX.length-1]===t){
         e.preventDefault();
         t.blur(); // speichert + rendert neu
-        document.getElementById('nkzposx_add')?.click(); // fokussiert die neue Bezeichnung
+        document.getElementById('nkzposx_add')?.focus();
         return;
       }
     }
-    // Zusätzliche Platten: Tab im letzten Feld der letzten Zeile (ganze Platten, sonst m²) legt gleich die nächste Platte an
+    // Geplante Zusatzpositionen (Soll aus der Kalkulation): Tab im Preisfeld der LETZTEN geplanten Position führt
+    // direkt zu den zusätzlichen Positionen — gibt es noch keine, auf „+ Position hinzufügen“.
+    if(!e.shiftKey && t.dataset.nkZposPreis!==undefined){
+      const alleG = [...el.querySelectorAll('[data-nk-zpos-preis]')];
+      if(alleG[alleG.length-1]===t){
+        e.preventDefault();
+        t.blur(); // speichert + rendert neu
+        const ersteExtra = document.querySelector('[data-nkzposx-name]');
+        if(ersteExtra){ ersteExtra.focus(); ersteExtra.select?.(); }
+        else document.getElementById('nkzposx_add')?.focus();
+        return;
+      }
+    }
+    // Zusätzliche Platten: Tab im letzten Feld der letzten Zeile (ganze Platten, sonst m²) springt auf „+ Platte hinzufügen“
     if(!e.shiftKey && (t.dataset.nkzpxM2!==undefined || t.dataset.nkzpxStueck!==undefined)){
       const alleM2 = [...el.querySelectorAll('[data-nkzpx-m2]')];
       const letzterM2 = alleM2[alleM2.length-1];
       if(letzterM2){
         const idx = letzterM2.dataset.nkzpxM2;
         const letztesFeld = el.querySelector(`[data-nkzpx-stueck="${idx}"]`) || letzterM2;
-        if(t===letztesFeld && (parseFloat(letzterM2.value)||0)>0){
+        if(t===letztesFeld){
           e.preventDefault();
           t.blur();
-          document.getElementById('nkzpx_add')?.click(); // fokussiert die neue Bezeichnung
+          document.getElementById('nkzpx_add')?.focus();
           return;
         }
       }
