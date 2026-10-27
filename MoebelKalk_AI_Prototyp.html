@@ -1677,14 +1677,15 @@ function oeffneNkZusammenfassung(aktualisierung){
       </tbody>${zeilen.length>1?`<tfoot><tr class="fett"><td class="lbl">Summe</td><td class="mono preis">${eur(gesamtPreisIst)}</td></tr></tfoot>`:''}</table>
     </section>`;
   const kundenNamen = kundenEindeutig.join(' / ');
+  const vkAufgerundet = z => Math.ceil(Math.round(z.k.verkaufspreisIst*100)/100/5 - 1e-9)*5; // Vorschlag für den Kunden: auf volle 5 € aufgerundet
   const kundenTitelStart = 'Preisübersicht' + (kundenNamen ? ' – ' + kundenNamen : '');
   const kundenListeHtml = `<div class="kunden-logo"><img src="${FIRMENLOGO_DATAURI}" alt="Söllner Schreinerei"></div>
     <h2 class="kunden-titel"><input type="text" id="kundenTitel" value="${escapeHtml(kundenTitelStart)}" aria-label="Überschrift für den Kunden" title="Überschrift für den Kunden — hier änderbar"></h2>
     <section class="proj liste">
-      <div class="kopf"><div class="titel">Kundenpreis-Liste</div><div class="unter">Preis und Kommentar je Projekt selbst eintragen (graue Zahl = VK-Preis laut Nachkalkulation)</div></div>
+      <div class="kopf"><div class="titel">Kundenpreis-Liste</div><div class="unter">Preis und Kommentar je Projekt selbst eintragen (graue Zahl = VK-Preis laut Nachkalkulation, auf volle 5 € aufgerundet)</div></div>
       <table><thead><tr><th>Projekt</th><th>Preis für den Kunden</th></tr></thead><tbody id="kpBody">
-        ${zeilen.map(z=>`<tr data-pid="${escapeHtml(z.p.id)}"><td class="lbl"><input type="text" class="kp-name" value="${escapeHtml(z.p.name)}" aria-label="Projektname" title="Projektname — hier für den Kunden änderbar"><textarea rows="1" class="kp-kommentar" placeholder="Kommentar / Beschreibung (optional)" aria-label="Kommentar ${escapeHtml(z.p.name)}"></textarea></td><td class="preis"><input type="text" inputmode="decimal" class="kp-input" data-vk="${Math.round(z.k.verkaufspreisIst*100)/100}" placeholder="${eur(z.k.verkaufspreisIst)}" aria-label="Kundenpreis ${escapeHtml(z.p.name)}"><div class="kp-zeile2 noprint"><label class="kp-chk-l" title="VK-Preis laut Nachkalkulation als Kundenpreis übernehmen"><input type="checkbox" class="kp-chk"> VK übernehmen (${eur(z.k.verkaufspreisIst)})</label><button type="button" class="kp-del" title="Dieses Projekt aus der Kundenpreis-Liste entfernen">✕</button></div></td></tr>`).join('')}
-      </tbody><tfoot><tr class="fett"><td class="lbl">Summe</td><td class="mono preis" id="kpSumme">${eur(0)}</td></tr></tfoot></table>
+        ${zeilen.map(z=>`<tr data-pid="${escapeHtml(z.p.id)}"><td class="lbl"><input type="text" class="kp-name" value="${escapeHtml(z.p.name)}" aria-label="Projektname" title="Projektname — hier für den Kunden änderbar"><textarea rows="1" class="kp-kommentar" placeholder="Kommentar / Beschreibung (optional)" aria-label="Kommentar ${escapeHtml(z.p.name)}"></textarea></td><td class="preis"><input type="text" inputmode="decimal" class="kp-input" data-vk="${vkAufgerundet(z)}" placeholder="${eur(vkAufgerundet(z))}" aria-label="Kundenpreis ${escapeHtml(z.p.name)}"><div class="kp-zeile2 noprint"><label class="kp-chk-l" title="VK-Preis laut Nachkalkulation als Kundenpreis übernehmen"><input type="checkbox" class="kp-chk"> VK übernehmen (${eur(vkAufgerundet(z))})</label><button type="button" class="kp-del" title="Dieses Projekt aus der Kundenpreis-Liste entfernen">✕</button></div></td></tr>`).join('')}
+      </tbody><tfoot><tr class="fett"><td class="lbl">Gesamtsumme netto</td><td class="mono preis" id="kpSumme">${eur(0)}</td></tr></tfoot></table>
     </section>
     <div class="noprint" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
       <button type="button" id="kpZeileNeu" class="sek">＋ Eigene Zeile hinzufügen</button>
@@ -5921,6 +5922,19 @@ function renderEinstellungen(el){
     for(const m of muts){ if(m.addedNodes.length){ ausTabreihenfolgeNehmen(document.body); break; } }
   });
   tabBeobachter.observe(document.body, {childList:true, subtree:true});
+  // Überall im Programm: Zahlenfelder mit einer 0 werden beim Anklicken (oder Hineintabben) geleert, damit sofort getippt werden kann.
+  // Bleibt das Feld leer, wird beim Verlassen wieder die 0 eingesetzt (ohne Änderung, ohne Neuberechnung).
+  document.addEventListener('focusin', e=>{
+    const t = e.target;
+    if(!t || t.tagName!=='INPUT' || t.type!=='number' || t.readOnly || t.disabled) return;
+    if(t.value!=='' && parseFloat(t.value)===0){ t.dataset.nullMerken = t.value; t.value = ''; }
+  });
+  document.addEventListener('focusout', e=>{
+    const t = e.target;
+    if(!t || !t.dataset || t.dataset.nullMerken===undefined) return;
+    if(t.value==='') t.value = t.dataset.nullMerken;
+    delete t.dataset.nullMerken;
+  });
   await loadAll();
   cloudListenerStarten();
   DB.projects.filter(p=>p.status!=='abgeschlossen').forEach(p=>cloudSyncProjekt(p).then(()=>cloudNeuBerechneStundenFuerProjekt(p.id)).catch(err=>console.warn('Initialer Cloud-Sync fehlgeschlagen:', err)));
