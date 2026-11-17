@@ -4552,6 +4552,11 @@ function vkBerechne(v){
         bPush = sucheB(['b6'],'push'), bAus = sucheB(['b7'],'auszug'), bVer = sucheB(['b10'],'verbinder'), bTra = sucheB(['b11'],'bodenträger'), bFuss = sucheB(['b12'],'sockelfuß');
   const q = {};
   const add = (b, n, grund)=>{ if(!n) return; if(!b){ R.hinweise.push(`Beschlag „${grund}“ fehlt in der Beschlagverwaltung — nicht berechnet.`); return; } q[b.id] = (q[b.id]||0)+n; };
+  // Material: Standard aus der Vorabfrage (fester €/m²-Preis oder Materialverwaltung); jeder Bereich kann ein eigenes Material wählen
+  const fest = parseFloat(v.festPreis)||0;
+  const pK = fest || findMat(v.matKorpusId)?.preis || 0, pF = fest || findMat(v.matFrontId)?.preis || 0, pR = fest || findMat(v.matRueckwandId)?.preis || 0;
+  const zK=1+(s.zuschlagKorpus||0)/100, zF=1+(s.zuschlagFront||0)/100, zR=1+(s.zuschlagRueckwand||0)/100;
+  let matKorpus=0, matFront=0, matRueck=0, eigenesMaterial=false;
   let korpusFl=0, frontFl=0, rueckFl=0, kanten=0, teileAnz=0, korpusTeile=0, frontStk=0, felderSumme=0, bohr=0, sockelBereiche=0;
   (v.bereiche||[]).forEach(b=>{
     const B=(b.breite||0)/1000, H=(b.hoehe||0)/1000, T=(b.tiefe||0)/1000;
@@ -4574,15 +4579,15 @@ function vkBerechne(v){
     const nFuss = b.sockel ? sockelAnzahl(b.breite||0, ms).gesamt : 0; add(bFuss, nFuss, 'Sockelfuß');
     if(b.sockel) sockelBereiche++;
     bohr += nSch + nVer + nTra + nFuss;
+    const bK = b.matKorpusId ? findMat(b.matKorpusId) : null, bF = b.matFrontId ? findMat(b.matFrontId) : null, bR = b.matRueckwandId ? findMat(b.matRueckwandId) : null;
+    if(bK||bF||bR) eigenesMaterial = true;
+    const mK = kFl*zK*(bK ? bK.preis : pK), mF = fFl*zF*(bF ? bF.preis : pF), mR = rFl*zR*(bR ? bR.preis : pR);
+    matKorpus+=mK; matFront+=mF; matRueck+=mR;
     korpusFl+=kFl; rueckFl+=rFl; frontFl+=fFl; kanten+=kant; felderSumme+=felder;
     korpusTeile += (ms+2)+2+fb; teileAnz += (ms+2)+2+fb+(b.rueckwand?1:0)+frN; frontStk += fr || (fFl>0?1:0);
-    R.bereiche.push({name:b.name||b.typ, korpusFl:kFl, frontFl:fFl, rueckFl:rFl, kanten:kant, fronten:fr, scharniere:nSch});
+    R.bereiche.push({name:b.name||b.typ, korpusFl:kFl, frontFl:fFl, rueckFl:rFl, kanten:kant, fronten:fr, scharniere:nSch, material:mK+mF+mR});
   });
   // Material
-  const fest = parseFloat(v.festPreis)||0;
-  const pK = fest || findMat(v.matKorpusId)?.preis || 0, pF = fest || findMat(v.matFrontId)?.preis || 0, pR = fest || findMat(v.matRueckwandId)?.preis || 0;
-  const zK=1+(s.zuschlagKorpus||0)/100, zF=1+(s.zuschlagFront||0)/100, zR=1+(s.zuschlagRueckwand||0)/100;
-  const matKorpus = korpusFl*zK*pK, matFront = frontFl*zF*pF, matRueck = rueckFl*zR*pR;
   const materialNetto = matKorpus+matFront+matRueck;
   const gewMat = materialNetto*(s.gewinnMaterial||0)/100;
   const kantenKosten = kanten*(s.kantenpreis||0), gewKant = kantenKosten*(s.gewinnKanten||0)/100;
@@ -4626,7 +4631,7 @@ function vkBerechne(v){
   const pauschal = Math.max(0, parseFloat(v.pauschal)||0);
   const netto = materialNetto+gewMat + kantenKosten+gewKant + beschlagKosten+gewBes + zukaufEk+zukaufGew + kostenW+kostenB + pauschal;
   const sp = Math.max(0, parseFloat(v.spanne)||0)/100;
-  Object.assign(R, {korpusFl,frontFl,rueckFl,gesamtFl,kanten,teileAnz,frontStk,pK,pF,pR,matKorpus,matFront,matRueck,materialNetto,gewMat,
+  Object.assign(R, {eigenesMaterial,korpusFl,frontFl,rueckFl,gesamtFl,kanten,teileAnz,frontStk,pK,pF,pR,matKorpus,matFront,matRueck,materialNetto,gewMat,
     kantenKosten,gewKant,beschlagKosten,gewBes,zukaufEk,zukaufGew,stdWerkstatt,stdMontage,satzW,satzB,kostenW,kostenB,pauschal,
     netto, brutto:netto*1.19, von:netto*(1-sp), bis:netto*(1+sp)});
   if(!(v.bereiche||[]).length) R.hinweise.push('Noch keine Bereiche erfasst.');
@@ -4830,6 +4835,10 @@ function renderVorkalkulation(el){
           <label style="display:flex;gap:6px;align-items:center;margin:14px 0 0;text-transform:none;font-size:13px"><input type="checkbox" style="width:auto" data-vk-b="${i}" data-f="rueckwand" data-bool="1" ${b.rueckwand?'checked':''}>Rückwand</label>
           <label style="display:flex;gap:6px;align-items:center;margin:14px 0 0;text-transform:none;font-size:13px"><input type="checkbox" style="width:auto" data-vk-b="${i}" data-f="sockel" data-bool="1" ${b.sockel?'checked':''}>Sockelfüße</label>
         </div>
+        <div class="grid cols-3" style="margin-top:8px">
+          ${[['matKorpusId','Material Korpus'],['matFrontId','Material Front'],['matRueckwandId','Material Rückwand']].map(([f,l])=>`<div class="field"><label>${l}</label><select data-vk-b="${i}" data-f="${f}" data-text="1"><option value="">Standard (Vorabfrage)</option>${(DB.materials||[]).map(m=>`<option value="${m.id}" ${b[f]===m.id?'selected':''}>${esc(m.name)} (${fmtEUR(m.preis)}/m²)</option>`).join('')}</select></div>`).join('')}
+        </div>
+        <div class="small" style="margin-top:6px" data-vk-bsum="${i}"></div>
       </div>`).join('');
   }
   function zeichneZukauf(){
@@ -4876,6 +4885,7 @@ function renderVorkalkulation(el){
     }
     const R = vkBerechne(v);
     aktualisiereArbeit(R);
+    R.bereiche.forEach((br,i)=>{ const e = el.querySelector(`[data-vk-bsum="${i}"]`); if(e) e.textContent = `Fläche: Korpus ${br.korpusFl.toFixed(2).replace('.',',')} · Front ${br.frontFl.toFixed(2).replace('.',',')} · Rückwand ${br.rueckFl.toFixed(2).replace('.',',')} m² — Material (inkl. Verschnitt): ${fmtEUR(br.material)}`; });
     const z = (l,w,fett)=>`<div class="kv"><span>${l}</span><b${fett?' style="font-weight:700"':''}>${w}</b></div>`;
     const ansicht = (v.gesamtBreite>0 && v.gesamtHoehe>0) ? (v.gesamtBreite/1000)*(v.gesamtHoehe/1000) : 0;
     const kennzahlen = [];
@@ -4886,7 +4896,7 @@ function renderVorkalkulation(el){
       ${R.hinweise.map(h=>`<div class="hint warn">⚠️ ${esc(h)}</div>`).join('')}
       ${v.kiHinweis?`<div class="hint">🤖 <div><b>KI-Vorschlag — bitte prüfen.</b> ${esc(v.kiHinweis)}</div></div>`:''}
       ${z(`Plattenfläche (Korpus ${R.korpusFl.toFixed(2)} · Front ${R.frontFl.toFixed(2)} · Rückwand ${R.rueckFl.toFixed(2)} m²)`, fmtM2(R.gesamtFl))}
-      ${z(`Material inkl. Verschnitt (${R.pK?R.pK.toFixed(2).replace('.',','):'–'} €/m²) + Gewinn`, fmtEUR(R.materialNetto+R.gewMat))}
+      ${z(`Material inkl. Verschnitt (${R.eigenesMaterial?'Standard '+(R.pK?R.pK.toFixed(2).replace('.',','):'–')+' €/m² + eigene je Bereich':(R.pK?R.pK.toFixed(2).replace('.',','):'–')+' €/m²'}) + Gewinn`, fmtEUR(R.materialNetto+R.gewMat))}
       ${z(`Kanten (${R.kanten.toFixed(1).replace('.',',')} lfm) + Gewinn`, fmtEUR(R.kantenKosten+R.gewKant))}
       ${z(`Beschläge (${R.beschlaege.reduce((a,x)=>a+x.menge,0)} Teile) + Gewinn`, fmtEUR(R.beschlagKosten+R.gewBes))}
       ${R.zukauf.length?z('Zukauf / Zusatzleistungen + Gewinn', fmtEUR(R.zukaufEk+R.zukaufGew)):''}
@@ -4957,7 +4967,7 @@ function renderVorkalkulation(el){
     const t = e.target;
     if(t.dataset.vkB!==undefined && t.dataset.bool){ v.bereiche[+t.dataset.vkB][t.dataset.f] = t.checked; rechne(); }
     else if(t.dataset.vkB!==undefined && t.dataset.f==='typ'){
-      const b = v.bereiche[+t.dataset.vkB]; if(b.name===b.typ) b.name = t.value; b.typ = t.value; rechne(); zeichneBereiche();
+      const b = v.bereiche[+t.dataset.vkB]; if(b.name===b.typ) b.name = t.value; b.typ = t.value; zeichneBereiche(); rechne();
     }
   });
   const bind = (sel, fn)=>{ const x = $(sel); if(x) x.addEventListener('input', fn); };
